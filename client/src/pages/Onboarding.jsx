@@ -61,13 +61,17 @@ export default function Onboarding({ onComplete }) {
       {/* Ambient glow */}
       <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, background: 'radial-gradient(circle, var(--accent-glow2), transparent 60%)', pointerEvents: 'none', zIndex: 0 }} />
 
-      {/* Sign out */}
-      <button onClick={logout} style={{
-        position: 'absolute', top: 16, right: 24, background: 'none', border: 'none',
-        color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer', padding: '4px 8px',
-      }}>
-        Sign out
-      </button>
+      {/* User chip + sign out */}
+      <div style={{ position: 'absolute', top: 16, right: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)', fontWeight: 500 }}>{user.display_name}</span>
+        <button onClick={logout} style={{
+          background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8,
+          color: 'var(--text-dim)', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+          padding: '5px 10px', transition: 'all 0.2s',
+        }}>
+          Sign out
+        </button>
+      </div>
 
       <div style={{ position: 'relative', zIndex: 1 }}>
         {/* Progress bar */}
