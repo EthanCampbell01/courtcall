@@ -1,17 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
-const { getDb, DB_PATH } = require('./db');
+const { getDb } = require('./db');
 const { SCORING, scoreMatchPredictions } = require('./scoring');
 const { nanoid } = require('nanoid');
 const crypto = require('crypto');
-
-// Auto-initialize DB if it doesn't exist (e.g. first deploy on Railway)
-if (!fs.existsSync(DB_PATH)) {
-  console.log('No database found — running setup-db.js...');
-  require('./setup-db');
-}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -485,9 +478,9 @@ function adminAuth(req, res, next) {
     const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
     if (user && adminUsers.includes(user.username.toLowerCase())) return next();
 
-    // Option 3: First registered user is admin
-    const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
-    if (firstUser && firstUser.id === userId) return next();
+    // Option 3: First real registered user (skipping demo seed user) is admin
+    const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
+    if (firstReal && firstReal.id === userId) return next();
   }
 
   return res.status(403).json({ error: 'Admin access required. Set ADMIN_KEY env variable or use the first registered account.' });
