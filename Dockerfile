@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y \
     libx11-xcb1 \
     libxcomposite1 \
     libxrandr2 \
+    python3 \
+    make \
+    g++ \
     --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
@@ -42,7 +45,7 @@ WORKDIR /app
 
 # Install server dependencies
 COPY server/package.json server/package-lock.json* ./server/
-RUN cd server && npm ci --ignore-scripts 2>/dev/null || cd server && npm install
+RUN cd server && npm install
 
 # Copy server code
 COPY server/ ./server/
