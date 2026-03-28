@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 360px;
+      min-height: 200px;
+      background: #0C1117;
+      color: #E8EDF3;
+      font-family: 'Segoe UI', -apple-system, sans-serif;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1E2A3A;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #22D68A, #4AE8A0);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .header small { font-size: 11px; color: #7A8BA0; }
+    .status {
+      padding: 12px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .status.info { background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.2); color: #7AADFF; }
+    .status.success { background: rgba(34,214,138,0.1); border: 1px solid rgba(34,214,138,0.2); color: #22D68A; }
+    .status.error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #EF4444; }
+    .status.warning { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); color: #F59E0B; }
+    .section { margin-bottom: 12px; }
+    .section-label { font-size: 11px; color: #7A8BA0; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .match-preview {
+      background: #151C25;
+      border: 1px solid #1E2A3A;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+    .match-preview .players { font-weight: 600; }
+    .match-preview .seed { color: #F59E0B; font-size: 10px; }
+    .match-preview .score { color: #3B82F6; font-family: 'Courier New', monospace; font-size: 11px; }
+    .match-preview .vs { color: #4A5B6E; margin: 0 4px; }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #1E2A3A;
+      background: #151C25;
+      color: #E8EDF3;
+      font-size: 13px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    input:focus, select:focus { border-color: #22D68A; }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-primary {
+      background: linear-gradient(135deg, #22D68A, #1AA86C);
+      color: #0C1117;
+    }
+    .btn-secondary {
+      background: #1E2A3A;
+      color: #7A8BA0;
+      margin-top: 6px;
+    }
+    .event-list { max-height: 150px; overflow-y: auto; }
+    .event-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+    .event-item:hover { background: #1A2332; }
+    .event-item .dot { width: 6px; height: 6px; border-radius: 3px; background: #22D68A; }
+    .count { font-family: 'Courier New', monospace; font-weight: 700; color: #22D68A; font-size: 18px; }
+    .settings {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #1E2A3A;
+    }
+    .settings label { font-size: 11px; color: #7A8BA0; }
+    #scroll-area { max-height: 300px; overflow-y: auto; }
+    #scroll-area::-webkit-scrollbar { width: 4px; }
+    #scroll-area::-webkit-scrollbar-thumb { background: #2A3A4E; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span style="font-size: 22px;">🎾</span>
+    <div>
+      <h1>CourtCall</h1>
+      <small>TI Draw Importer</small>
+    </div>
+  </div>
+
+  <div id="content">
+    <div class="status info">Checking page...</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

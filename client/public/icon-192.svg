@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="32" fill="#0C1117"/>
+  <circle cx="96" cy="88" r="48" fill="#22D68A"/>
+  <path d="M 72 48 Q 96 88 72 128" stroke="#0C1117" stroke-width="5" fill="none"/>
+  <path d="M 120 48 Q 96 88 120 128" stroke="#0C1117" stroke-width="5" fill="none"/>
+  <text x="96" y="172" text-anchor="middle" font-family="sans-serif" font-size="18" font-weight="700" fill="#22D68A">CourtCall</text>
+</svg>

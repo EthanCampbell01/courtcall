@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: courtcall
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: ADMIN_KEY
+        generateValue: true
+    healthCheckPath: /api/scoring
+    disk:
+      name: courtcall-data
+      mountPath: /app/server
+      sizeGB: 1

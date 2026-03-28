@@ -1,0 +1,22 @@
+{
+  "name": "courtcall-server",
+  "version": "1.0.0",
+  "description": "CourtCall backend — Irish tennis predictions",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js",
+    "setup": "node setup-db.js",
+    "migrate": "node migrate-circuits.js",
+    "scrape": "node scraper-auto.js",
+    "scrape:tournament": "node scraper-auto.js --tournament",
+    "scrape:daemon": "node scraper-auto.js --daemon"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "nanoid": "^3.3.7",
+    "puppeteer": "^22.0.0"
+  }
+}

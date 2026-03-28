@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "CourtCall — TI Draw Importer",
+  "version": "1.0.0",
+  "description": "Import tennis tournament draws from ti.tournamentsoftware.com into CourtCall with one click.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["*://*.tournamentsoftware.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.tournamentsoftware.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

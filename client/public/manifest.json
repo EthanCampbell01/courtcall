@@ -1,0 +1,23 @@
+{
+  "name": "CourtCall",
+  "short_name": "CourtCall",
+  "description": "Tennis prediction app — pick your winners, compete with mates",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0C1117",
+  "theme_color": "#0C1117",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

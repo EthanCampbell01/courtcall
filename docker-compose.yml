@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  courtcall:
+    build: .
+    ports:
+      - "3001:3001"
+    volumes:
+      # Persist only the SQLite database file
+      - courtcall-db:/app/server/data
+    environment:
+      - PORT=3001
+      - NODE_ENV=production
+      - ADMIN_KEY=${ADMIN_KEY:-courtcall-admin-2026}
+      - DB_PATH=/app/server/data/courtcall.db
+    restart: unless-stopped
+
+volumes:
+  courtcall-db:
