@@ -13,6 +13,7 @@ export default function Onboarding({ onComplete }) {
   const [joined, setJoined] = useState([]);
   const [leagueCode, setLeagueCode] = useState('');
   const [leagueError, setLeagueError] = useState('');
+  const [joinError, setJoinError] = useState('');
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
 
@@ -24,10 +25,13 @@ export default function Onboarding({ onComplete }) {
   }, []);
 
   const handleJoinCircuit = async (circuitId) => {
+    setJoinError('');
     try {
       await api.joinCircuit(circuitId, user.id);
       setJoined(prev => prev.includes(circuitId) ? prev : [...prev, circuitId]);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      setJoinError(e.message || 'Failed to join circuit');
+    }
   };
 
   const handleJoinLeague = async () => {
@@ -92,6 +96,11 @@ export default function Onboarding({ onComplete }) {
               {fetchError && (
                 <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--red-glow)', border: '1px solid rgba(255,71,87,0.2)', textAlign: 'center' }}>
                   <div style={{ fontSize: 13, color: 'var(--red)', fontWeight: 500 }}>Failed to load circuits — check your server is running</div>
+                </div>
+              )}
+              {joinError && (
+                <div style={{ padding: '14px 16px', borderRadius: 12, background: 'var(--red-glow)', border: '1px solid rgba(255,71,87,0.2)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, color: 'var(--red)', fontWeight: 500 }}>{joinError}</div>
                 </div>
               )}
               {!fetchError && circuits.length === 0 && !loading && (

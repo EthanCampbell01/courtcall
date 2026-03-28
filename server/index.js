@@ -175,6 +175,10 @@ app.post('/api/circuits/join', (req, res) => {
   if (!circuit_id || !user_id) return res.status(400).json({ error: 'circuit_id and user_id required' });
 
   const db = getDb();
+
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
+  if (!user) return res.status(404).json({ error: 'Account not found. Please sign out and register again.' });
+
   const circuit = db.prepare('SELECT * FROM circuits WHERE id = ? OR slug = ?').get(circuit_id, circuit_id);
   if (!circuit) return res.status(404).json({ error: 'Circuit not found' });
 
@@ -182,8 +186,13 @@ app.post('/api/circuits/join', (req, res) => {
     .get(circuit.id, user_id);
   if (existing) return res.json({ success: true, already_member: true });
 
-  db.prepare('INSERT INTO circuit_members (id, circuit_id, user_id, role) VALUES (?, ?, ?, ?)')
-    .run(nanoid(12), circuit.id, user_id, 'member');
+  try {
+    db.prepare('INSERT INTO circuit_members (id, circuit_id, user_id, role) VALUES (?, ?, ?, ?)')
+      .run(nanoid(12), circuit.id, user_id, 'member');
+  } catch (err) {
+    console.error('circuit join error:', err.message);
+    return res.status(500).json({ error: 'Failed to join circuit. Please try again.' });
+  }
 
   res.json({ success: true, circuit: { id: circuit.id, name: circuit.name } });
 });
