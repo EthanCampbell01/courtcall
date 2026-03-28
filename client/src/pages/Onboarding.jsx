@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../utils/api';
 
+
 /**
  * Onboarding screen shown after first registration.
  * Guides user to: pick their circuits, then join or create a league.
  */
 export default function Onboarding({ onComplete }) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [step, setStep] = useState(1);
   const [circuits, setCircuits] = useState([]);
   const [joined, setJoined] = useState([]);
@@ -59,6 +60,14 @@ export default function Onboarding({ onComplete }) {
     <div style={{ maxWidth: 440, margin: '0 auto', padding: '32px 24px', minHeight: '100vh', position: 'relative' }}>
       {/* Ambient glow */}
       <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, background: 'radial-gradient(circle, var(--accent-glow2), transparent 60%)', pointerEvents: 'none', zIndex: 0 }} />
+
+      {/* Sign out */}
+      <button onClick={logout} style={{
+        position: 'absolute', top: 16, right: 24, background: 'none', border: 'none',
+        color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer', padding: '4px 8px',
+      }}>
+        Sign out
+      </button>
 
       <div style={{ position: 'relative', zIndex: 1 }}>
         {/* Progress bar */}
