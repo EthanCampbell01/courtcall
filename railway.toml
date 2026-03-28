@@ -4,7 +4,5 @@ buildCommand = "cd client && npm install && npm run build && cd ../server && npm
 
 [deploy]
 startCommand = "node server/index.js"
-healthcheckPath = "/api/scoring"
-healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
