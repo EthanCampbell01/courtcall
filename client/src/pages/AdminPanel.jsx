@@ -62,8 +62,10 @@ export default function AdminPanel({ showToast }) {
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>Add tournaments, input draws, enter results</p>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto' }}>
-        {['scraper', 'matches', 'tournament', 'results'].map(t => (
-          <button key={t} onClick={() => setTab(t)} style={tabStyle(tab === t)}>{t === 'scraper' ? '🔗 TI Scraper' : t === 'matches' ? 'Add Matches' : t === 'tournament' ? 'Add Tournament' : 'Enter Results'}</button>
+        {['scraper', 'matches', 'tournament', 'results', 'users'].map(t => (
+          <button key={t} onClick={() => setTab(t)} style={tabStyle(tab === t)}>
+            {t === 'scraper' ? '🔗 TI Scraper' : t === 'matches' ? 'Add Matches' : t === 'tournament' ? 'Add Tournament' : t === 'results' ? 'Enter Results' : '👥 Users'}
+          </button>
         ))}
       </div>
 
@@ -71,6 +73,7 @@ export default function AdminPanel({ showToast }) {
       {tab === 'tournament' && <AddTournament showToast={showToast} onAdded={() => api.getTournaments().then(setTournaments).catch(console.error)} />}
       {tab === 'matches' && <AddMatches tournaments={tournaments} showToast={showToast} selectedTournament={selectedTournament} setSelectedTournament={setSelectedTournament} tournamentDetail={tournamentDetail} onAdded={() => selectedTournament && api.getTournament(selectedTournament).then(setTournamentDetail).catch(console.error)} />}
       {tab === 'results' && <EnterResults tournaments={tournaments} showToast={showToast} selectedTournament={selectedTournament} setSelectedTournament={setSelectedTournament} tournamentDetail={tournamentDetail} onResultSaved={() => selectedTournament && api.getTournament(selectedTournament).then(setTournamentDetail).catch(console.error)} />}
+      {tab === 'users' && <UsersPanel showToast={showToast} />}
       </>
       )}
     </div>
@@ -599,6 +602,73 @@ function ScraperPanel({ tournaments, showToast }) {
           ))}
         </>
       )}
+    </div>
+  );
+}
+
+function UsersPanel({ showToast }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const getUserId = () => { try { return JSON.parse(window.localStorage.getItem('courtcall_user'))?.id; } catch { return null; } };
+
+  useEffect(() => {
+    fetch(`/api/admin/users?user_id=${getUserId()}`)
+      .then(r => r.json())
+      .then(d => { setUsers(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const toggleAdmin = (user) => {
+    const newVal = !user.is_admin;
+    fetch(`/api/admin/users/${user.id}/set-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: getUserId(), admin: newVal }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_admin: newVal } : u));
+          showToast(`${user.username} is ${newVal ? 'now an admin' : 'no longer an admin'}`);
+        }
+      })
+      .catch(() => showToast('Failed to update admin status'));
+  };
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>Loading users...</div>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>{users.length} registered users</p>
+      {users.map(user => (
+        <div key={user.id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 22 }}>{user.avatar}</span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{user.display_name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>@{user.username}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {user.is_admin && <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, background: 'var(--accent-glow)', padding: '2px 8px', borderRadius: 6 }}>Admin</span>}
+            <button
+              onClick={() => toggleAdmin(user)}
+              disabled={user.is_env_admin}
+              title={user.is_env_admin ? 'Set via environment variable' : ''}
+              style={{
+                padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: user.is_env_admin ? 'not-allowed' : 'pointer',
+                border: `1px solid ${user.is_admin ? 'var(--red)' : 'var(--accent)'}`,
+                background: user.is_admin ? 'var(--red-glow)' : 'var(--accent-glow)',
+                color: user.is_admin ? 'var(--red)' : 'var(--accent)',
+                opacity: user.is_env_admin ? 0.5 : 1,
+              }}
+            >
+              {user.is_admin ? 'Revoke Admin' : 'Make Admin'}
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

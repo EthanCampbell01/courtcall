@@ -23,6 +23,15 @@ app.use((err, req, res, next) => {
 // Serve static frontend in production
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 
+// ─── Migrations ───────────────────────────────────────────────────────
+(function migrate() {
+  const db = getDb();
+  const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+  if (!cols.includes('is_admin')) {
+    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
+  }
+})();
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 function hashPin(pin) {
   return crypto.createHash('sha256').update(pin).digest('hex');
@@ -95,15 +104,7 @@ app.post('/api/auth/login', (req, res) => {
 
 // Check if current user has admin access
 app.get('/api/auth/is-admin', (req, res) => {
-  const userId = req.query.user_id;
-  if (!userId) return res.json({ isAdmin: false });
-  const db = getDb();
-  const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
-  if (!user) return res.json({ isAdmin: false });
-  const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
-  if (adminUsers.includes(user.username.toLowerCase())) return res.json({ isAdmin: true });
-  const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
-  return res.json({ isAdmin: firstReal && firstReal.id === userId });
+  res.json({ isAdmin: isAdminUser(req.query.user_id) });
 });
 
 // ─── CIRCUIT ROUTES ──────────────────────────────────────────────────
@@ -478,26 +479,50 @@ app.get('/api/leagues/:id', (req, res) => {
 // Simple admin auth: require admin_key header or check if user is first registered (admin)
 const ADMIN_KEY = process.env.ADMIN_KEY || 'courtcall-admin-2026';
 
-function adminAuth(req, res, next) {
-  // Option 1: Admin key in header
-  if (req.headers['x-admin-key'] === ADMIN_KEY) return next();
-
-  const userId = req.body?.user_id || req.query?.user_id;
-  if (userId) {
-    const db = getDb();
-    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
-
-    // Option 2: Username is in ADMIN_USERS env var (comma-separated)
-    const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
-    if (user && adminUsers.includes(user.username.toLowerCase())) return next();
-
-    // Option 3: First real registered user (skipping demo seed user) is admin
-    const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
-    if (firstReal && firstReal.id === userId) return next();
-  }
-
-  return res.status(403).json({ error: 'Admin access required. Set ADMIN_KEY env variable or use the first registered account.' });
+function isAdminUser(userId) {
+  if (!userId) return false;
+  const db = getDb();
+  const user = db.prepare('SELECT id, username, is_admin FROM users WHERE id = ?').get(userId);
+  if (!user) return false;
+  // DB flag
+  if (user.is_admin) return true;
+  // ADMIN_USERS env var
+  const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+  if (adminUsers.includes(user.username.toLowerCase())) return true;
+  // First real registered user (not demo)
+  const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
+  if (firstReal && firstReal.id === userId) return true;
+  return false;
 }
+
+function adminAuth(req, res, next) {
+  if (req.headers['x-admin-key'] === ADMIN_KEY) return next();
+  const userId = req.body?.user_id || req.query?.user_id;
+  if (isAdminUser(userId)) return next();
+  return res.status(403).json({ error: 'Admin access required.' });
+}
+
+// List all users
+app.get('/api/admin/users', adminAuth, (req, res) => {
+  const db = getDb();
+  const requesterId = req.query.user_id;
+  const users = db.prepare("SELECT id, username, display_name, avatar, created_at, is_admin FROM users ORDER BY created_at ASC").all();
+  const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
+  const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+  res.json(users.map(u => ({
+    ...u,
+    is_admin: !!(u.is_admin || adminUsers.includes(u.username.toLowerCase()) || (firstReal && firstReal.id === u.id)),
+    is_env_admin: adminUsers.includes(u.username.toLowerCase()) || (firstReal && firstReal.id === u.id),
+  })));
+});
+
+// Set or revoke admin for a user
+app.post('/api/admin/users/:id/set-admin', adminAuth, (req, res) => {
+  const db = getDb();
+  const { admin } = req.body;
+  db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(admin ? 1 : 0, req.params.id);
+  res.json({ success: true });
+});
 
 // Add a tournament
 app.post('/api/admin/tournaments', adminAuth, (req, res) => {
