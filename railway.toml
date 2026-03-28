@@ -3,7 +3,7 @@ builder = "NIXPACKS"
 buildCommand = "cd client && npm install && npm run build && cd ../server && npm install"
 
 [deploy]
-startCommand = "node server/start.sh"
+startCommand = "sh server/start.sh"
 healthcheckPath = "/api/scoring"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
