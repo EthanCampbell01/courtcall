@@ -93,6 +93,19 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ id: user.id, username: user.username, display_name: user.display_name, avatar: user.avatar });
 });
 
+// Check if current user has admin access
+app.get('/api/auth/is-admin', (req, res) => {
+  const userId = req.query.user_id;
+  if (!userId) return res.json({ isAdmin: false });
+  const db = getDb();
+  const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+  if (!user) return res.json({ isAdmin: false });
+  const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+  if (adminUsers.includes(user.username.toLowerCase())) return res.json({ isAdmin: true });
+  const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
+  return res.json({ isAdmin: firstReal && firstReal.id === userId });
+});
+
 // ─── CIRCUIT ROUTES ──────────────────────────────────────────────────
 
 // List all public circuits

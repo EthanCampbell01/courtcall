@@ -17,8 +17,9 @@ export default function AdminPanel({ showToast }) {
     // then test an actual admin endpoint
     const user = (() => { try { return JSON.parse(window.localStorage.getItem('courtcall_user')); } catch { return null; } })();
     if (user) {
-      fetch(`/api/admin/scraper-status?user_id=${user.id}`)
-        .then(r => { setIsAdmin(r.ok); })
+      fetch(`/api/auth/is-admin?user_id=${user.id}`)
+        .then(r => r.json())
+        .then(d => setIsAdmin(d.isAdmin === true))
         .catch(() => setIsAdmin(false));
     } else {
       setIsAdmin(false);
