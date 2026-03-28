@@ -1,10 +1,17 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { getDb } = require('./db');
+const fs = require('fs');
+const { getDb, DB_PATH } = require('./db');
 const { SCORING, scoreMatchPredictions } = require('./scoring');
 const { nanoid } = require('nanoid');
 const crypto = require('crypto');
+
+// Auto-initialize DB if it doesn't exist (e.g. first deploy on Railway)
+if (!fs.existsSync(DB_PATH)) {
+  console.log('No database found — running setup-db.js...');
+  require('./setup-db');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;

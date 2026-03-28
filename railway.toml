@@ -1,10 +1,10 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "cd client && npm install && npm run build && cd ../server && npm install"
+builder = "DOCKERFILE"
+dockerfilePath = "./Dockerfile"
 
 [deploy]
-startCommand = "sh server/start.sh"
+startCommand = "node /app/server/index.js"
 healthcheckPath = "/api/scoring"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
