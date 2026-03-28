@@ -1,4 +1,4 @@
-# cache-bust: 2026-03-28c
+# cache-bust: 2026-03-28d
 FROM node:20-slim AS frontend-build
 WORKDIR /app/client
 COPY client/package*.json ./
