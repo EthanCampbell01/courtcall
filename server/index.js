@@ -476,10 +476,16 @@ function adminAuth(req, res, next) {
   // Option 1: Admin key in header
   if (req.headers['x-admin-key'] === ADMIN_KEY) return next();
 
-  // Option 2: Check user_id in body or query — first registered user is admin
   const userId = req.body?.user_id || req.query?.user_id;
   if (userId) {
     const db = getDb();
+    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+
+    // Option 2: Username is in ADMIN_USERS env var (comma-separated)
+    const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+    if (user && adminUsers.includes(user.username.toLowerCase())) return next();
+
+    // Option 3: First registered user is admin
     const firstUser = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
     if (firstUser && firstUser.id === userId) return next();
   }
