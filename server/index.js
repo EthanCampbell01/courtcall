@@ -23,13 +23,22 @@ app.use((err, req, res, next) => {
 // Serve static frontend in production
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 
-// ─── Migrations ───────────────────────────────────────────────────────
-(function migrate() {
-  const db = getDb();
-  const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
-  if (!cols.includes('is_admin')) {
-    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
+// ─── Boot: init DB if missing, then migrate ───────────────────────────
+(function boot() {
+  const fs = require('fs');
+  const { DB_PATH } = require('./db');
+  if (!fs.existsSync(DB_PATH)) {
+    console.log('No database found — running setup-db.js...');
+    require('./setup-db');
   }
+  // Migrations (safe to run on every boot)
+  try {
+    const db = getDb();
+    const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+    if (cols.length && !cols.includes('is_admin')) {
+      db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
+    }
+  } catch (e) { console.error('Migration error:', e.message); }
 })();
 
 // ─── Helpers ──────────────────────────────────────────────────────────
