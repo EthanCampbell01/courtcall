@@ -12,15 +12,18 @@ FROM node:20-slim AS frontend-build
 
 WORKDIR /app/client
 COPY client/package.json client/package-lock.json* ./
-RUN npm ci --ignore-scripts 2>/dev/null || npm install
+RUN npm install
 COPY client/ ./
 RUN npm run build
 
 # ─── Stage 2: Production server ───────────────────────────────────────
 FROM node:20-slim
 
-# Install chromium for Puppeteer (optional — for auto-scraper)
+# Install build tools (needed for better-sqlite3 native compile) + chromium for scraper
 RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
     chromium \
     fonts-liberation \
     libgbm1 \
@@ -31,9 +34,6 @@ RUN apt-get update && apt-get install -y \
     libx11-xcb1 \
     libxcomposite1 \
     libxrandr2 \
-    python3 \
-    make \
-    g++ \
     --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
@@ -43,26 +43,19 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-# Install server dependencies
+# Install server dependencies (npm install runs postinstall which builds better-sqlite3)
 COPY server/package.json server/package-lock.json* ./server/
 RUN cd server && npm install
 
-# Copy server code
+# Copy server code and startup script
 COPY server/ ./server/
+RUN chmod +x /app/server/start.sh
 
 # Copy built frontend
 COPY --from=frontend-build /app/client/dist ./client/dist
 
-# Setup database if it doesn't exist
-RUN cd server && node setup-db.js
-
 # Expose port
 EXPOSE 3001
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD curl -f http://localhost:3001/api/scoring || exit 1
-
-# Start server
-WORKDIR /app/server
-CMD ["node", "index.js"]
+# Start via script — initialises DB on first run if needed
+CMD ["sh", "/app/server/start.sh"]
