@@ -896,6 +896,128 @@ try {
   console.log('  ℹ️  Puppeteer not installed — auto-scraper disabled (npm install puppeteer to enable)');
 }
 
+// ─── STATUS PAGE ──────────────────────────────────────────────────────
+app.get('/status', (req, res) => {
+  const db = getDb();
+
+  const circuits   = db.prepare('SELECT id, name, is_public FROM circuits').all();
+  const users      = db.prepare("SELECT id, username, display_name, is_admin, created_at FROM users WHERE username != 'demo'").all();
+  const tournaments = db.prepare('SELECT id, name, status, circuit_id FROM tournaments ORDER BY status, name').all();
+  const events     = db.prepare('SELECT id, tournament_id, code, name FROM events').all();
+  const matches    = db.prepare(`
+    SELECT m.id, m.player1_name, m.player2_name, m.status, m.winner_name, m.score,
+           r.name as round_name, e.tournament_id
+    FROM matches m
+    JOIN rounds r ON m.round_id = r.id
+    JOIN events e ON r.event_id = e.id
+    ORDER BY e.tournament_id, r.round_order, m.match_order
+  `).all();
+  const predictions = db.prepare(`
+    SELECT p.id, u.username, m.player1_name, m.player2_name, p.predicted_winner,
+           p.points_earned, p.is_scored
+    FROM predictions p
+    JOIN users u ON p.user_id = u.id
+    JOIN matches m ON p.match_id = m.id
+    ORDER BY p.created_at DESC
+    LIMIT 100
+  `).all();
+  const leagues    = db.prepare('SELECT id, name, invite_code, circuit_id FROM leagues').all();
+
+  const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const table = (headers, rows) => `
+    <table>
+      <thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.length ? rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${headers.length}" class="empty">none</td></tr>`}</tbody>
+    </table>`;
+
+  const section = (title, content) => `<section><h2>${esc(title)}</h2>${content}</section>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CourtCall Status</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; padding: 24px; }
+  h1 { color: #00e87b; font-size: 22px; margin-bottom: 4px; }
+  .meta { color: #6e7681; font-size: 13px; margin-bottom: 28px; }
+  section { margin-bottom: 32px; }
+  h2 { color: #58a6ff; font-size: 15px; font-weight: 600; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #21262d; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: #161b22; color: #8b949e; text-align: left; padding: 6px 10px; font-weight: 500; }
+  td { padding: 5px 10px; border-bottom: 1px solid #21262d; color: #c9d1d9; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  tr:hover td { background: #161b22; }
+  td.empty { color: #6e7681; font-style: italic; text-align: center; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-active { background: rgba(0,232,123,0.15); color: #00e87b; }
+  .badge-upcoming { background: rgba(88,166,255,0.15); color: #58a6ff; }
+  .badge-completed { background: rgba(110,118,129,0.15); color: #8b949e; }
+  .counts { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 28px; }
+  .count-card { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 12px 18px; }
+  .count-card .n { font-size: 26px; font-weight: 700; color: #00e87b; line-height: 1; }
+  .count-card .l { font-size: 12px; color: #6e7681; margin-top: 2px; }
+</style>
+</head>
+<body>
+<h1>🎾 CourtCall Status</h1>
+<div class="meta">Generated ${new Date().toUTCString()}</div>
+
+<div class="counts">
+  ${[
+    [circuits.length, 'Circuits'],
+    [users.length, 'Users'],
+    [tournaments.length, 'Tournaments'],
+    [matches.length, 'Matches'],
+    [matches.filter(m => m.status === 'completed').length, 'Completed'],
+    [predictions.length > 100 ? '100+' : predictions.length, 'Predictions (recent)'],
+    [leagues.length, 'Leagues'],
+  ].map(([n, l]) => `<div class="count-card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join('')}
+</div>
+
+${section('Circuits', table(
+  ['ID', 'Name', 'Public'],
+  circuits.map(c => [c.id, c.name, c.is_public ? 'yes' : 'no'])
+))}
+
+${section(`Users (${users.length})`, table(
+  ['ID', 'Username', 'Display Name', 'Admin', 'Joined'],
+  users.map(u => [u.id, u.username, u.display_name, u.is_admin ? '✓' : '', u.created_at])
+))}
+
+${section(`Tournaments (${tournaments.length})`, table(
+  ['ID', 'Name', 'Status', 'Circuit'],
+  tournaments.map(t => [t.id, t.name, t.status, t.circuit_id || ''])
+))}
+
+${section(`Events (${events.length})`, table(
+  ['ID', 'Tournament', 'Code', 'Name'],
+  events.map(e => [e.id, e.tournament_id, e.code, e.name])
+))}
+
+${section(`Matches (${matches.length})`, table(
+  ['Tournament', 'Round', 'Player 1', 'Player 2', 'Status', 'Winner', 'Score'],
+  matches.map(m => [m.tournament_id, m.round_name, m.player1_name, m.player2_name, m.status, m.winner_name || '', m.score || ''])
+))}
+
+${section(`Leagues (${leagues.length})`, table(
+  ['ID', 'Name', 'Invite Code', 'Circuit'],
+  leagues.map(l => [l.id, l.name, l.invite_code, l.circuit_id || ''])
+))}
+
+${section(`Recent Predictions (last 100)`, table(
+  ['User', 'Match', 'Predicted', 'Points', 'Scored'],
+  predictions.map(p => [p.username, `${p.player1_name} v ${p.player2_name}`, p.predicted_winner, p.points_earned ?? '', p.is_scored ? 'yes' : 'no'])
+))}
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
+});
+
 // ─── API 404 handler (must come before SPA fallback) ──────────────────
 app.all('/api/*', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
