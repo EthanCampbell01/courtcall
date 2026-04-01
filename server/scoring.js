@@ -44,8 +44,8 @@ function scorePrediction(prediction, result) {
     return { total, breakdown };
   }
 
-  // 2. Correct number of sets (use == for type coercion: DB may return number, prediction may be string)
-  const setsCorrect = prediction.predicted_sets != null && prediction.predicted_sets == result.sets_played;
+  // 2. Correct number of sets — coerce both to number since DB may return integer but prediction may be string
+  const setsCorrect = prediction.predicted_sets != null && Number(prediction.predicted_sets) === Number(result.sets_played);
   if (setsCorrect) {
     breakdown.sets = SCORING.correctSets;
   }
@@ -95,8 +95,9 @@ function isUpset(result) {
  */
 function normalizeScore(score) {
   if (!score) return '';
+  // Normalise each set: sort games so "4-6" and "6-4" are distinct (winner first),
+  // but keep tiebreak markers so 6-7(5) != 6-7(8) — different tiebreaks aren't equal.
   return score
-    .replace(/\(\d+\)/g, '')  // Strip tiebreak markers like (5)
     .replace(/,/g, '')
     .replace(/\s+/g, ' ')
     .trim()

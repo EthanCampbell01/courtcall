@@ -147,8 +147,8 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS reactions (
     id TEXT PRIMARY KEY,
-    prediction_id TEXT NOT NULL REFERENCES predictions(id),
-    user_id TEXT NOT NULL REFERENCES users(id),
+    prediction_id TEXT NOT NULL REFERENCES predictions(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     emoji TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(prediction_id, user_id)
@@ -197,6 +197,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reactions_prediction ON reactions(prediction_id);
   CREATE INDEX IF NOT EXISTS idx_circuit_members_circuit ON circuit_members(circuit_id);
   CREATE INDEX IF NOT EXISTS idx_circuit_members_user ON circuit_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status);
 `);
 
 // ─── Add circuit_id columns if missing (safe for re-runs) ────────────

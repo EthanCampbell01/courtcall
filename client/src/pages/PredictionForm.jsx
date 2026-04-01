@@ -76,19 +76,41 @@ export default function PredictionForm({ showToast }) {
   const handleSave = async () => {
     if (!winner) return;
 
-    // Validate scores if entered — each game score should be 0-7
+    // Validate scores if entered
     if (scoreString) {
-      const setScores = scoreString.split(' ');
+      const setScores = scoreString.trim().split(/\s+/);
       for (const s of setScores) {
-        const [a, b] = s.split('-').map(Number);
-        if (isNaN(a) || isNaN(b) || a < 0 || b < 0 || a > 7 || b > 7) {
-          showToast('Invalid score — each game must be 0-7');
+        // Strip tiebreak marker e.g. 7-6(5) → 7-6
+        const clean = s.replace(/\(\d+\)$/, '');
+        const parts = clean.split('-');
+        if (parts.length !== 2) {
+          showToast('Invalid score format — use e.g. 6-3 6-4 or 7-6(5) 6-3');
           setShowConfirm(false);
           return;
         }
-        // At least one player must win 6+ games (or 7 in a tiebreak)
-        if (a < 6 && b < 6) {
+        const [a, b] = parts.map(Number);
+        if (isNaN(a) || isNaN(b) || a < 0 || b < 0 || a > 7 || b > 7) {
+          showToast('Invalid score — games must be 0-7');
+          setShowConfirm(false);
+          return;
+        }
+        // At least one player must have 6+ games, and scores like 7-7 are impossible
+        const maxGames = Math.max(a, b);
+        const minGames = Math.min(a, b);
+        if (maxGames < 6) {
           showToast('Invalid score — winner needs at least 6 games per set');
+          setShowConfirm(false);
+          return;
+        }
+        if (a === 7 && b === 7) {
+          showToast('Invalid score — 7-7 is not a valid set score');
+          setShowConfirm(false);
+          return;
+        }
+        // If winner has exactly 6, loser must have 4 or fewer (not 5, 6)
+        // Exception: 7-5, 7-6 are valid
+        if (maxGames === 6 && minGames > 4) {
+          showToast('Invalid score — if winner has 6, loser must have 4 or fewer (use 7-5 or 7-6 otherwise)');
           setShowConfirm(false);
           return;
         }

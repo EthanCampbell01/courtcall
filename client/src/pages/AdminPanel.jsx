@@ -27,9 +27,12 @@ export default function AdminPanel({ showToast }) {
   }, []);
 
   useEffect(() => {
-    if (selectedTournament) {
-      api.getTournament(selectedTournament).then(setTournamentDetail).catch(console.error);
-    }
+    if (!selectedTournament) return;
+    let cancelled = false;
+    api.getTournament(selectedTournament)
+      .then(d => { if (!cancelled) setTournamentDetail(d); })
+      .catch(console.error);
+    return () => { cancelled = true; };
   }, [selectedTournament]);
 
   const tabStyle = (active) => ({
@@ -495,8 +498,6 @@ function ScraperPanel({ tournaments, showToast }) {
   useEffect(() => {
     fetch(`/api/admin/scraper-status?user_id=${getUserId() || ''}`).then(r => r.json()).then(setStatus).catch(console.error);
   }, []);
-
-  const selectedT = tournaments.find(t => t.id === selectedTournament);
 
   const handleLink = async () => {
     if (!selectedTournament || !tiUrl.trim()) return;

@@ -14,7 +14,7 @@ export default function Predictions() {
 
   if (loading) return <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading...</div>;
 
-  const totalPoints = predictions.reduce((a, p) => a + (p.points_earned || 0), 0);
+  const totalPoints = predictions.filter(p => p.is_scored).reduce((a, p) => a + (p.points_earned || 0), 0);
   const scored = predictions.filter(p => p.is_scored);
   const pending = predictions.filter(p => !p.is_scored);
 

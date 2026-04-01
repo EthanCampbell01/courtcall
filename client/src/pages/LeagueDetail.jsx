@@ -34,35 +34,44 @@ export default function LeagueDetail() {
   }, [id]);
 
   const handleReact = async (predictionId, emoji) => {
+    // Optimistic update
+    const prev = reactions;
+    setReactions(cur => {
+      const updated = { ...cur };
+      const existing = (updated[predictionId] || []).filter(r => r.user_id !== user.id);
+      updated[predictionId] = [...existing, { user_id: user.id, emoji, display_name: user.display_name }];
+      return updated;
+    });
     try {
       await fetch('/api/reactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prediction_id: predictionId, user_id: user.id, emoji }),
       });
-      // Optimistic update
-      setReactions(prev => {
-        const updated = { ...prev };
-        const existing = (updated[predictionId] || []).filter(r => r.user_id !== user.id);
-        updated[predictionId] = [...existing, { user_id: user.id, emoji, display_name: user.display_name }];
-        return updated;
-      });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setReactions(prev); // revert on failure
+    }
   };
 
   const handleRemoveReaction = async (predictionId) => {
+    // Optimistic update
+    const prev = reactions;
+    setReactions(cur => {
+      const updated = { ...cur };
+      updated[predictionId] = (updated[predictionId] || []).filter(r => r.user_id !== user.id);
+      return updated;
+    });
     try {
       await fetch('/api/reactions', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prediction_id: predictionId, user_id: user.id }),
       });
-      setReactions(prev => {
-        const updated = { ...prev };
-        updated[predictionId] = (updated[predictionId] || []).filter(r => r.user_id !== user.id);
-        return updated;
-      });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setReactions(prev); // revert on failure
+    }
   };
 
   // Load h2h when target selected

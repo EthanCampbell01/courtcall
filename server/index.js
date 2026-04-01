@@ -13,7 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // Handle malformed JSON bodies — return JSON error not HTML
-app.use((err, req, res, next) => {
+app.use((err, _req, res, next) => {
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Invalid JSON in request body' });
   }
@@ -38,6 +38,7 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     if (cols.length && !cols.includes('is_admin')) {
       db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
     }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status)");
   } catch (e) { console.error('Migration error:', e.message); }
 })();
 
@@ -119,7 +120,7 @@ app.get('/api/auth/is-admin', (req, res) => {
 // ─── CIRCUIT ROUTES ──────────────────────────────────────────────────
 
 // List all public circuits
-app.get('/api/circuits', (req, res) => {
+app.get('/api/circuits', (_req, res) => {
   const db = getDb();
   const circuits = db.prepare(`
     SELECT c.*,
@@ -327,7 +328,7 @@ app.post('/api/predictions', (req, res) => {
 // are only visible via the league activity/h2h endpoints which filter by deadline.
 app.get('/api/predictions/:userId/:tournamentId', (req, res) => {
   const db = getDb();
-  const requestingUser = req.query.requesting_user;
+  // requesting_user reserved for future cross-user visibility
 
   // Only allow viewing your own predictions (or all if you're requesting your own)
   // Other users' predictions are visible through league endpoints after deadline
@@ -387,14 +388,15 @@ app.post('/api/leagues', (req, res) => {
     if (attempt === 9) return res.status(500).json({ error: 'Failed to generate unique invite code. Try again.' });
   }
 
-  db.prepare(`
-    INSERT INTO leagues (id, name, invite_code, buy_in, tournament_id, created_by)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, name, invite_code, buy_in || 0, tournament_id || null, user_id);
-
-  // Auto-add creator as member
-  db.prepare('INSERT INTO league_members (id, league_id, user_id) VALUES (?, ?, ?)')
-    .run(nanoid(12), id, user_id);
+  const createLeague = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO leagues (id, name, invite_code, buy_in, tournament_id, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, name, invite_code, buy_in || 0, tournament_id || null, user_id);
+    db.prepare('INSERT INTO league_members (id, league_id, user_id) VALUES (?, ?, ?)')
+      .run(nanoid(12), id, user_id);
+  });
+  createLeague();
 
   res.json({ id, name, invite_code, buy_in: buy_in || 0, tournament_id });
 });
@@ -521,9 +523,8 @@ function adminAuth(req, res, next) {
 }
 
 // List all users
-app.get('/api/admin/users', adminAuth, (req, res) => {
+app.get('/api/admin/users', adminAuth, (_req, res) => {
   const db = getDb();
-  const requesterId = req.query.user_id;
   const users = db.prepare("SELECT id, username, display_name, avatar, created_at, is_admin FROM users ORDER BY created_at ASC").all();
   const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
   const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
@@ -705,7 +706,7 @@ app.post('/api/admin/results', adminAuth, (req, res) => {
 });
 
 // ─── SCORING INFO ─────────────────────────────────────────────────────
-app.get('/api/scoring', (req, res) => {
+app.get('/api/scoring', (_req, res) => {
   res.json(SCORING);
 });
 
@@ -812,7 +813,6 @@ app.get('/api/h2h/:userId1/:userId2', (req, res) => {
   const matches = db.prepare(query).all(...params);
 
   // Filter out pre-deadline predictions — only show picks after deadline or match completed
-  const now = new Date();
   const visibleMatches = matches.map(m => {
     // If match is completed, show everything
     if (m.match_status === 'completed') return m;
@@ -860,7 +860,7 @@ app.get('/api/leagues/:id/activity', (req, res) => {
     JOIN matches m ON p.match_id = m.id
     JOIN rounds r ON m.round_id = r.id
     JOIN events e ON r.event_id = e.id
-    ${league.tournament_id ? 'AND e.tournament_id = ?' : ''}
+    ${league.tournament_id ? 'WHERE e.tournament_id = ?' : ''}
     ORDER BY p.updated_at DESC
     LIMIT 30
   `).all(...[req.params.id, league.tournament_id].filter(Boolean));
@@ -889,7 +889,7 @@ addScraperRoutes(app, adminAuth);
 
 // Auto-scraper (Puppeteer-based) — only load if puppeteer is available
 try {
-  const { addAutoScraperRoutes, runDaemon } = require('./scraper-auto');
+  const { addAutoScraperRoutes } = require('./scraper-auto');
   addAutoScraperRoutes(app, adminAuth);
   console.log('  ✅ Puppeteer auto-scraper loaded');
 } catch (e) {
@@ -897,7 +897,7 @@ try {
 }
 
 // ─── STATUS PAGE ──────────────────────────────────────────────────────
-app.get('/status', (req, res) => {
+app.get('/status', (_req, res) => {
   const db = getDb();
 
   const circuits   = db.prepare('SELECT id, name, is_public FROM circuits').all();
@@ -1019,17 +1019,17 @@ ${section(`Recent Predictions (last 100)`, table(
 });
 
 // ─── API 404 handler (must come before SPA fallback) ──────────────────
-app.all('/api/*', (req, res) => {
+app.all('/api/*', (_req, res) => {
   res.status(404).json({ error: 'API endpoint not found' });
 });
 
 // ─── SPA FALLBACK ─────────────────────────────────────────────────────
-app.get('*', (req, res) => {
+app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
 });
 
 // ─── GLOBAL ERROR HANDLER ─────────────────────────────────────────────
-app.use((err, req, res, next) => {
+app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err.message);
   res.status(500).json({ error: 'Internal server error' });
 });

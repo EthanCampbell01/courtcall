@@ -7,7 +7,7 @@ import Tag from '../components/Tag';
 import Countdown from '../components/Countdown';
 import BracketView from '../components/BracketView';
 
-export default function TournamentDetail({ showToast }) {
+export default function TournamentDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -21,16 +21,20 @@ export default function TournamentDetail({ showToast }) {
 
   // Re-fetch whenever we navigate to this page (location.key changes on every navigation)
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     Promise.all([
       api.getTournament(id),
       api.getTournamentPredictions(user.id, id),
     ]).then(([t, preds]) => {
+      if (cancelled) return;
       setTournament(t);
       const predMap = {};
       preds.forEach(p => { predMap[p.match_id] = p; });
       setPredictions(predMap);
-    }).catch(console.error).finally(() => setLoading(false));
+    }).catch(err => { if (!cancelled) console.error(err); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [id, user.id, location.key]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>Loading draw...</div>;

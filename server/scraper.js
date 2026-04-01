@@ -281,10 +281,16 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
 
   // 1. Fetch tournament page to discover events/draws
   const tournamentUrl = `${BASE_URL}/tournament/${tournamentGuid}`;
-  const tournamentHtml = await fetchPage(tournamentUrl);
+  let tournamentHtml;
+  try {
+    tournamentHtml = await fetchPage(tournamentUrl);
+  } catch (err) {
+    console.error(`   ❌ Failed to fetch tournament page: ${err.message}`);
+    return { events: 0, rounds: 0, matches: 0 };
+  }
   await delay(REQUEST_DELAY_MS);
 
-  const { events, meta } = parseTournamentPage(tournamentHtml);
+  const { events } = parseTournamentPage(tournamentHtml);
   console.log(`   Found ${events.length} events: ${events.map(e => e.name).join(', ')}`);
 
   const db = getDb();
@@ -370,15 +376,6 @@ async function scrapeResultUpdates(tournamentGuid, tournamentId) {
   console.log(`🔄 Checking for result updates...`);
 
   const db = getDb();
-
-  // Get all events for this tournament
-  const events = db.prepare(`
-    SELECT e.*, r.id as round_id, r.name as round_name
-    FROM events e
-    JOIN rounds r ON r.event_id = e.id
-    WHERE e.tournament_id = ?
-    ORDER BY r.round_order
-  `).all(tournamentId);
 
   // Get unfinished matches
   const openMatches = db.prepare(`
@@ -510,7 +507,7 @@ function startScheduledScraper() {
 // ─── Express Routes (add to your server) ──────────────────────────────
 
 function addScraperRoutes(app, adminAuth) {
-  const auth = adminAuth || ((req, res, next) => next()); // fallback if not provided
+  const auth = adminAuth || ((_req, _res, next) => next()); // fallback if not provided
 
   // Manually trigger a scrape for a tournament
   app.post('/api/admin/scrape', auth, async (req, res) => {
@@ -540,7 +537,7 @@ function addScraperRoutes(app, adminAuth) {
   });
 
   // Check scraper status
-  app.get('/api/admin/scraper-status', auth, (req, res) => {
+  app.get('/api/admin/scraper-status', auth, (_req, res) => {
     const db = getDb();
     const linked = db.prepare(`
       SELECT id, name, ti_url,

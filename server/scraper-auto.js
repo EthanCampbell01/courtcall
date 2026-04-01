@@ -306,61 +306,67 @@ async function importDrawToDb(tournamentId, eventName, matches) {
     return existingMatchCount;
   }
 
-  // Clear existing data — must delete predictions first (foreign key to matches)
-  for (const r of existingRounds) {
-    const matchIds = db.prepare('SELECT id FROM matches WHERE round_id = ?').all(r.id);
-    for (const m of matchIds) {
-      db.prepare('DELETE FROM predictions WHERE match_id = ?').run(m.id);
-    }
-    db.prepare('DELETE FROM matches WHERE round_id = ?').run(r.id);
-  }
-  db.prepare('DELETE FROM rounds WHERE event_id = ?').run(eventId);
-
-  // Infer round structure and create rounds + matches
+  // Wrap the entire delete+insert in a transaction so a failed scrape
+  // never leaves the DB in a half-deleted state
   const rounds = inferRounds(matches.length);
-  let matchIdx = 0;
   let totalImported = 0;
 
-  for (let r = 0; r < rounds.length; r++) {
-    const roundId = `${eventId}-r${r + 1}`;
-    const deadline = new Date();
-    deadline.setDate(deadline.getDate() + (r * 2) + 1);
-    deadline.setHours(23, 59, 0, 0);
+  const importAll = db.transaction(() => {
+    // Clear existing data — delete predictions first (FK constraint)
+    for (const r of existingRounds) {
+      const matchIds = db.prepare('SELECT id FROM matches WHERE round_id = ?').all(r.id);
+      for (const m of matchIds) {
+        db.prepare('DELETE FROM predictions WHERE match_id = ?').run(m.id);
+      }
+      db.prepare('DELETE FROM matches WHERE round_id = ?').run(r.id);
+    }
+    db.prepare('DELETE FROM rounds WHERE event_id = ?').run(eventId);
 
-    db.prepare(`INSERT INTO rounds (id, event_id, name, round_order, prediction_deadline) VALUES (?, ?, ?, ?, ?)`)
-      .run(roundId, eventId, rounds[r].name, r + 1, deadline.toISOString());
+    let matchIdx = 0;
+    const insertPred = db.prepare('UPDATE predictions SET points_earned = ?, is_scored = 1 WHERE id = ?');
 
-    for (let m = 0; m < rounds[r].count && matchIdx < matches.length; m++) {
-      const match = matches[matchIdx++];
-      const matchId = nanoid(12);
+    for (let r = 0; r < rounds.length; r++) {
+      const roundId = `${eventId}-r${r + 1}`;
+      const deadline = new Date();
+      deadline.setDate(deadline.getDate() + (r * 2) + 1);
+      deadline.setHours(23, 59, 0, 0);
 
-      db.prepare(`
-        INSERT INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed,
-          status, winner_name, score, sets_played, match_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        matchId, roundId, match.player1_name, match.player1_seed || null,
-        match.player2_name, match.player2_seed || null,
-        match.status || 'upcoming', match.winner_name || null,
-        match.score || null, match.sets_played || null, m + 1
-      );
-      totalImported++;
+      db.prepare(`INSERT INTO rounds (id, event_id, name, round_order, prediction_deadline) VALUES (?, ?, ?, ?, ?)`)
+        .run(roundId, eventId, rounds[r].name, r + 1, deadline.toISOString());
 
-      // Auto-score predictions for completed matches
-      if (match.status === 'completed' && match.winner_name) {
-        const fullMatch = db.prepare('SELECT * FROM matches WHERE id = ?').get(matchId);
-        const predictions = db.prepare('SELECT * FROM predictions WHERE match_id = ?').all(matchId);
-        if (predictions.length > 0 && fullMatch) {
-          const results = scoreMatchPredictions(predictions, fullMatch);
-          const update = db.prepare('UPDATE predictions SET points_earned = ?, is_scored = 1 WHERE id = ?');
-          for (const res of results) {
-            update.run(res.points, res.predictionId);
+      for (let m = 0; m < rounds[r].count && matchIdx < matches.length; m++) {
+        const match = matches[matchIdx++];
+        const matchId = nanoid(12);
+
+        db.prepare(`
+          INSERT INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed,
+            status, winner_name, score, sets_played, match_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          matchId, roundId, match.player1_name, match.player1_seed || null,
+          match.player2_name, match.player2_seed || null,
+          match.status || 'upcoming', match.winner_name || null,
+          match.score || null, match.sets_played || null, m + 1
+        );
+        totalImported++;
+
+        // Auto-score any existing predictions for newly-completed matches
+        if (match.status === 'completed' && match.winner_name) {
+          const fullMatch = db.prepare('SELECT * FROM matches WHERE id = ?').get(matchId);
+          if (!fullMatch) continue;
+          const preds = db.prepare('SELECT * FROM predictions WHERE match_id = ?').all(matchId);
+          if (preds.length > 0) {
+            const results = scoreMatchPredictions(preds, fullMatch);
+            for (const res of results) {
+              insertPred.run(res.points, res.predictionId);
+            }
           }
         }
       }
     }
-  }
+  });
 
+  importAll();
   return totalImported;
 }
 
@@ -477,7 +483,7 @@ async function runDaemon() {
 
 // ─── Express Route Integration ──────────────────────────────────────
 function addAutoScraperRoutes(app, adminAuth) {
-  const auth = adminAuth || ((req, res, next) => next());
+  const auth = adminAuth || ((_req, _res, next) => next());
 
   // Trigger manual scrape for a specific tournament
   app.post('/api/admin/auto-scrape', auth, async (req, res) => {
@@ -495,7 +501,7 @@ function addAutoScraperRoutes(app, adminAuth) {
   });
 
   // Trigger scrape of all linked tournaments
-  app.post('/api/admin/auto-scrape-all', auth, async (req, res) => {
+  app.post('/api/admin/auto-scrape-all', auth, async (_req, res) => {
     try {
       await scrapeAll();
       res.json({ success: true });
