@@ -160,25 +160,65 @@ function parseTournamentList(html) {
 
 /**
  * Infer a circuit ID from a TI location string like "Club Name | Dublin"
- * or "Club Name | BELFAST, Northern Ireland"
+ * or "Club Name | BELFAST, Northern Ireland".
+ *
+ * Strategy: only keyword-match on the CITY part (after the | separator).
+ * Matching the full string causes false positives e.g. "TENNIS" contains
+ * "ENNIS" (a Munster city), so every "Tennis Club" would match Munster.
+ * As a fallback, also check the full string for province-level markers
+ * that can't be substrings of club names (e.g. "NORTHERN IRELAND").
  */
 function inferCircuitFromLocation(location) {
   if (!location) return null;
-  const l = location.toUpperCase();
 
-  const ulster = ['NORTHERN IRELAND', 'BELFAST', 'ANTRIM', 'ARMAGH', 'FERMANAGH',
-    'DERRY', 'LONDONDERRY', 'TYRONE', 'LARNE', 'BANGOR', 'LISBURN', 'BALLYMENA',
-    'NEWRY', 'OMAGH', 'ENNISKILLEN', 'COLERAINE', 'DUNGANNON', 'STRABANE',
-    'CARRICKFERGUS', 'NEWTOWNABBEY', 'CASTLEDERG', 'DOWN ', ', DOWN'];
-  const leinster = ['DUBLIN', 'WICKLOW', 'KILDARE', 'MEATH', 'LOUTH', 'WEXFORD',
+  // Extract city portion (after the last |), otherwise use full string
+  const parts = location.split('|');
+  const city = (parts[parts.length - 1] || location).trim().toUpperCase();
+  const full = location.toUpperCase();
+
+  // Province-level markers checked against full string (safe — can't be club name substrings)
+  if (full.includes('NORTHERN IRELAND')) return 'ti-ulster';
+  if (full.includes('REPUBLIC OF IRELAND')) return null; // too vague, fall through to city
+
+  // Ulster — NI cities/towns checked against city portion only
+  const ulsterCities = [
+    'BELFAST', 'LISBURN', 'ANTRIM', 'BALLYMENA', 'BALLYCLARE', 'CARRICKFERGUS',
+    'NEWTOWNABBEY', 'LARNE', 'ARMAGH', 'NEWRY', 'BANBRIDGE', 'DUNGANNON',
+    'COOKSTOWN', 'MAGHERAFELT', 'STRABANE', 'DERRY', 'LONDONDERRY', 'COLERAINE',
+    'LIMAVADY', 'OMAGH', 'ENNISKILLEN', 'FERMANAGH', 'DOWNPATRICK', 'BANGOR',
+    'NEWTOWNARDS', 'HOLYWOOD', 'HILLSBOROUGH', 'COMBER', 'BALLYNAHINCH',
+    'DROMORE', 'BALLYCASTLE', 'PORTRUSH', 'PORTSTEWART', 'CASTLEDERG',
+    'TYRONE', 'FERMANAGH',
+  ];
+  if (ulsterCities.some(k => city.includes(k))) return 'ti-ulster';
+
+  // Leinster — Dublin & surrounding counties
+  const leinsterCities = [
+    'DUBLIN', 'WICKLOW', 'KILDARE', 'MEATH', 'LOUTH', 'WEXFORD',
     'KILKENNY', 'CARLOW', 'LAOIS', 'OFFALY', 'WESTMEATH', 'LONGFORD',
-    'BRAY', 'DROGHEDA', 'DUNDALK', 'NAAS', 'NAVAN', 'PORTLAOISE', 'MULLINGAR'];
-  const munster = ['CORK', 'KERRY', 'LIMERICK', 'TIPPERARY', 'WATERFORD', 'CLARE',
-    'CASHEL', 'ENNIS', 'TRALEE', 'KILLARNEY', 'DUNGARVAN', 'CLONMEL'];
+    'BRAY', 'GREYSTONES', 'DROGHEDA', 'DUNDALK', 'NAAS', 'NAVAN',
+    'PORTLAOISE', 'MULLINGAR', 'ATHLONE', 'ARKLOW', 'GOREY',
+    'DONABATE', 'SWORDS', 'MALAHIDE', 'CLONTARF', 'RATHMINES',
+    'BLACKROCK', 'DUNTRY', 'CELBRIDGE', 'MAYNOOTH', 'NEWBRIDGE',
+  ];
+  if (leinsterCities.some(k => city.includes(k))) return 'ti-leinster';
 
-  if (ulster.some(k => l.includes(k))) return 'ti-ulster';
-  if (leinster.some(k => l.includes(k))) return 'ti-leinster';
-  if (munster.some(k => l.includes(k))) return 'ti-munster';
+  // Munster — Cork, Kerry, Limerick, Tipperary, Waterford, Clare
+  const munsterCities = [
+    'CORK', 'KERRY', 'LIMERICK', 'TIPPERARY', 'WATERFORD', 'CLARE',
+    'CASHEL', 'CLONMEL', 'DUNGARVAN', 'TRALEE', 'KILLARNEY',
+    'ENNIS', 'NENAGH', 'THURLES', 'KILRUSH', 'YOUGHAL', 'COBH',
+    'MALLOW', 'BANTRY', 'SKIBBEREEN',
+  ];
+  if (munsterCities.some(k => city.includes(k))) return 'ti-munster';
+
+  // Connacht
+  const connachtCities = [
+    'GALWAY', 'MAYO', 'SLIGO', 'ROSCOMMON', 'LEITRIM',
+    'CASTLEBAR', 'BALLINA', 'TUAM', 'BALLINASLOE',
+  ];
+  if (connachtCities.some(k => city.includes(k))) return null; // no connacht circuit yet
+
   return null;
 }
 
