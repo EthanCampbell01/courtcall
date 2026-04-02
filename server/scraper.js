@@ -73,6 +73,50 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * POST form data to a URL and return the response body.
+ */
+function postForm(url, formData) {
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url);
+    const body = Object.entries(formData)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+
+    const options = {
+      hostname: parsedUrl.hostname,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'POST',
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Cookie': GDPR_COOKIE,
+        'Accept': 'text/html,*/*',
+        'Accept-Language': 'en-GB,en;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode} for POST ${url}`));
+        } else {
+          resolve(data);
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Request timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
 // ─── HTML Parsing (no external deps — uses regex for lightweight parsing) ──
 // Note: For production, consider using cheerio. This uses regex patterns
 // that match tournamentsoftware.com's known HTML structure.
@@ -84,28 +128,25 @@ function delay(ms) {
 function parseTournamentList(html) {
   const tournaments = [];
 
-  // Primary pattern: /tournament/{GUID}
-  const tournamentRegex = /href="\/tournament\/([A-F0-9-]{36})"[^>]*>([^<]+)/gi;
+  // TI search results use: href="/sport/tournament?id=GUID" title="Name"
+  // Both attributes appear on the same <a class="media__link"> tag
+  const searchRegex = /href="\/sport\/tournament\?id=([A-F0-9-]{36})"[^>]*title="([^"]+)"/gi;
   let match;
-  while ((match = tournamentRegex.exec(html)) !== null) {
+  while ((match = searchRegex.exec(html)) !== null) {
     const guid = match[1];
     const name = decodeHTMLEntities(match[2].trim());
-    if (name && name.length > 2 && !tournaments.find(t => t.guid === guid)) {
+    if (name && !tournaments.find(t => t.guid === guid)) {
       tournaments.push({ guid, name });
     }
   }
 
-  // Fallback: tournament-info.aspx?id={GUID} pattern (used on some TI pages)
-  const altRegex = /tournament-info\.aspx\?id=([A-F0-9-]{36})/gi;
-  while ((match = altRegex.exec(html)) !== null) {
+  // Fallback: /tournament/{GUID} pattern used on some older TI pages
+  const legacyRegex = /href="\/tournament\/([A-F0-9-]{36})"[^>]*>([^<]{5,80})</gi;
+  while ((match = legacyRegex.exec(html)) !== null) {
     const guid = match[1];
-    if (!tournaments.find(t => t.guid === guid)) {
-      // Try to find a nearby name in the surrounding HTML (within 300 chars)
-      const surrounding = html.slice(Math.max(0, match.index - 50), match.index + 300);
-      const nameMatch = surrounding.match(/<(?:h\d|strong|b|span)[^>]*>([^<]{5,80})<\/(?:h\d|strong|b|span)>/i)
-        || surrounding.match(/>([A-Z][^<]{4,79})</);
-      const name = nameMatch ? decodeHTMLEntities(nameMatch[1].trim()) : null;
-      if (name) tournaments.push({ guid, name });
+    const name = decodeHTMLEntities(match[2].trim());
+    if (name && !tournaments.find(t => t.guid === guid)) {
+      tournaments.push({ guid, name });
     }
   }
 
@@ -457,34 +498,49 @@ function inferEventCode(eventName) {
  */
 async function discoverNewTournaments(searchUrl) {
   const db = getDb();
+  const SEARCH_ENDPOINT = 'https://ti.tournamentsoftware.com/find/tournament/DoSearch';
 
-  // Build list of URLs to scrape — if custom URL given, just use that;
-  // otherwise scan current month + next 3 months on TI's find page
-  let urls;
+  // TI loads results via AJAX POST — build month/page combos to scrape.
+  // If a custom URL was supplied, extract year/month from it; otherwise scan
+  // current month + next 3 months.
+  let monthSlots;
   if (searchUrl) {
-    urls = [searchUrl];
-  } else {
-    urls = [];
+    const ym = searchUrl.match(/YearNr=(\d{4}).*MonthNr=(\d{1,2})/);
+    if (ym) {
+      monthSlots = [{ year: parseInt(ym[1]), month: parseInt(ym[2]) }];
+    } else {
+      // Custom URL but no recognisable params — fall through to default
+      monthSlots = null;
+    }
+  }
+
+  if (!monthSlots) {
+    monthSlots = [];
     const now = new Date();
     for (let offset = 0; offset < 4; offset++) {
       const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-      const year = d.getFullYear();
-      const month = d.getMonth() + 1;
-      urls.push(`https://ti.tournamentsoftware.com/find?DateFilterType=1&page=1&YearNr=${year}&MonthNr=${month}`);
+      monthSlots.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
     }
   }
 
   const allFound = [];
-  for (const url of urls) {
-    console.log(`🔍 Discovering from ${url}...`);
+  for (const { year, month } of monthSlots) {
+    console.log(`🔍 Discovering tournaments for ${year}/${month}...`);
     try {
-      const html = await fetchPage(url);
+      const html = await postForm(SEARCH_ENDPOINT, {
+        'Page': 1,
+        'TournamentExtendedFilter.SportID': 0,
+        'TournamentFilter.DateFilterType': 1,
+        'TournamentFilter.YearNr': year,
+        'TournamentFilter.MonthNr': month,
+        'TournamentFilter.Q': '',
+      });
       const found = parseTournamentList(html);
       console.log(`   Found ${found.length} tournaments`);
       allFound.push(...found);
       await delay(REQUEST_DELAY_MS);
     } catch (err) {
-      console.error(`❌ Discovery failed for ${url}: ${err.message}`);
+      console.error(`❌ Discovery failed for ${year}/${month}: ${err.message}`);
     }
   }
 
