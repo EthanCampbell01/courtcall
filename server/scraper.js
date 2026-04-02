@@ -84,14 +84,28 @@ function delay(ms) {
 function parseTournamentList(html) {
   const tournaments = [];
 
-  // Tournament links follow pattern: /tournament/{GUID}
-  const tournamentRegex = /href="\/tournament\/([A-F0-9-]+)"[^>]*>([^<]+)/gi;
+  // Primary pattern: /tournament/{GUID}
+  const tournamentRegex = /href="\/tournament\/([A-F0-9-]{36})"[^>]*>([^<]+)/gi;
   let match;
   while ((match = tournamentRegex.exec(html)) !== null) {
     const guid = match[1];
     const name = decodeHTMLEntities(match[2].trim());
-    if (name && !tournaments.find(t => t.guid === guid)) {
+    if (name && name.length > 2 && !tournaments.find(t => t.guid === guid)) {
       tournaments.push({ guid, name });
+    }
+  }
+
+  // Fallback: tournament-info.aspx?id={GUID} pattern (used on some TI pages)
+  const altRegex = /tournament-info\.aspx\?id=([A-F0-9-]{36})/gi;
+  while ((match = altRegex.exec(html)) !== null) {
+    const guid = match[1];
+    if (!tournaments.find(t => t.guid === guid)) {
+      // Try to find a nearby name in the surrounding HTML (within 300 chars)
+      const surrounding = html.slice(Math.max(0, match.index - 50), match.index + 300);
+      const nameMatch = surrounding.match(/<(?:h\d|strong|b|span)[^>]*>([^<]{5,80})<\/(?:h\d|strong|b|span)>/i)
+        || surrounding.match(/>([A-Z][^<]{4,79})</);
+      const name = nameMatch ? decodeHTMLEntities(nameMatch[1].trim()) : null;
+      if (name) tournaments.push({ guid, name });
     }
   }
 
@@ -442,19 +456,45 @@ function inferEventCode(eventName) {
  * @param {string} [searchUrl] - Override the default discovery URL
  */
 async function discoverNewTournaments(searchUrl) {
-  const url = searchUrl || 'https://ti.tournamentsoftware.com/find';
-  console.log(`🔍 Discovering tournaments from ${url}...`);
+  const db = getDb();
 
-  let html;
-  try {
-    html = await fetchPage(url);
-  } catch (err) {
-    console.error(`❌ Discovery failed: ${err.message}`);
-    return { found: 0, newCount: 0 };
+  // Build list of URLs to scrape — if custom URL given, just use that;
+  // otherwise scan current month + next 3 months on TI's find page
+  let urls;
+  if (searchUrl) {
+    urls = [searchUrl];
+  } else {
+    urls = [];
+    const now = new Date();
+    for (let offset = 0; offset < 4; offset++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1;
+      urls.push(`https://ti.tournamentsoftware.com/find?DateFilterType=1&page=1&YearNr=${year}&MonthNr=${month}`);
+    }
   }
 
-  const found = parseTournamentList(html);
-  const db = getDb();
+  const allFound = [];
+  for (const url of urls) {
+    console.log(`🔍 Discovering from ${url}...`);
+    try {
+      const html = await fetchPage(url);
+      const found = parseTournamentList(html);
+      console.log(`   Found ${found.length} tournaments`);
+      allFound.push(...found);
+      await delay(REQUEST_DELAY_MS);
+    } catch (err) {
+      console.error(`❌ Discovery failed for ${url}: ${err.message}`);
+    }
+  }
+
+  // Deduplicate by GUID across all pages
+  const seen = new Set();
+  const unique = allFound.filter(t => {
+    if (seen.has(t.guid)) return false;
+    seen.add(t.guid);
+    return true;
+  });
 
   const insert = db.prepare(`
     INSERT OR IGNORE INTO discovered_tournaments (id, guid, name, ti_url)
@@ -462,7 +502,7 @@ async function discoverNewTournaments(searchUrl) {
   `);
 
   let newCount = 0;
-  for (const t of found) {
+  for (const t of unique) {
     // Skip if already linked to a tournament in our DB
     const linked = db.prepare("SELECT id FROM tournaments WHERE ti_url LIKE ?").get(`%${t.guid}%`);
     if (linked) continue;
@@ -476,8 +516,8 @@ async function discoverNewTournaments(searchUrl) {
     if (result.changes > 0) newCount++;
   }
 
-  console.log(`🔍 Discovery complete: ${found.length} on page, ${newCount} new`);
-  return { found: found.length, newCount };
+  console.log(`🔍 Discovery complete: ${unique.length} unique found, ${newCount} new`);
+  return { found: unique.length, newCount };
 }
 
 // ─── Scheduled Scraping ───────────────────────────────────────────────
