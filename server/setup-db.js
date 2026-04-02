@@ -204,12 +204,11 @@ db.exec(`
 try { db.exec('ALTER TABLE tournaments ADD COLUMN circuit_id TEXT REFERENCES circuits(id)'); } catch (e) { /* already exists */ }
 try { db.exec('ALTER TABLE leagues ADD COLUMN circuit_id TEXT REFERENCES circuits(id)'); } catch (e) { /* already exists */ }
 
-// ─── Seed data ───────────────────────────────────────────────────────
-console.log('📋 Seeding circuits and tournaments...\n');
+// ─── Seed circuits only (no fake tournament data) ────────────────────
+console.log('📋 Seeding circuits...\n');
 
 const { nanoid } = require('nanoid');
 
-// ─── Seed circuits ───────────────────────────────────────────────────
 const circuitSeed = db.prepare(`
   INSERT OR IGNORE INTO circuits (id, name, slug, description, logo_emoji, country, data_source, data_source_url, data_source_config)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -235,202 +234,10 @@ circuitSeed.run('bucs-tennis', 'BUCS University Tennis', 'bucs',
   '🎓', 'GB', 'playwaze', 'https://bucs.playwaze.com',
   JSON.stringify({ communitySlug: 'bucs-tennis-25-26' }));
 
-// ─── Seed tournaments (linked to Ulster circuit) ─────────────────────
-const bcId = 'ballycastle-2026';
-db.prepare(`
-  INSERT OR IGNORE INTO tournaments (id, name, club, province, dates, start_date, surface, status, ti_url, circuit_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`).run(bcId, 'Ballycastle Open 2026', 'Ballycastle Tennis Club', 'Ulster', '11–18 Jul 2026', '2026-07-11', 'Grass', 'upcoming', 'https://ti.tournamentsoftware.com/tournament/90F4BBFC-DBE1-451F-8078-C1D1E12D9AD4', 'ti-ulster');
-
-// Men's Singles event
-const msId = 'bc26-ms';
-db.prepare(`
-  INSERT OR IGNORE INTO events (id, tournament_id, code, name, draw_size)
-  VALUES (?, ?, ?, ?, ?)
-`).run(msId, bcId, 'MS', "Men's Singles", 8);
-
-// Round 1
-const r1Id = 'bc26-ms-r1';
-db.prepare(`
-  INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-  VALUES (?, ?, ?, ?, ?)
-`).run(r1Id, msId, 'Round 1', 1, '2026-07-13T23:59:00');
-
-// QF
-const qfId = 'bc26-ms-qf';
-db.prepare(`
-  INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-  VALUES (?, ?, ?, ?, ?)
-`).run(qfId, msId, 'Quarter-Finals', 2, '2026-07-15T23:59:00');
-
-// SF
-const sfId = 'bc26-ms-sf';
-db.prepare(`
-  INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-  VALUES (?, ?, ?, ?, ?)
-`).run(sfId, msId, 'Semi-Finals', 3, '2026-07-17T23:59:00');
-
-// Final
-const fId = 'bc26-ms-f';
-db.prepare(`
-  INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-  VALUES (?, ?, ?, ?, ?)
-`).run(fId, msId, 'Final', 4, '2026-07-19T23:59:00');
-
-// Note: R1 matches are left empty — admin will populate them from the real draw
-// This is intentional: the admin inputs real player names once the draw is published
-
-// Insert more Ulster tournaments
-const ulsterTournaments = [
-  ['ciyms-2026', 'CIYMS Open 2026', 'CIYMS Tennis', '21–27 Jul 2026', '2026-07-21', 'Artificial Grass'],
-  ['cavehill-2026', 'Cavehill Open 2026', 'Cavehill Tennis Club', '28 Jul – 3 Aug 2026', '2026-07-28', 'Hard'],
-  ['bbc-2026', 'Belfast Boat Club Championships', 'Belfast Boat Club', '4–10 Aug 2026', '2026-08-04', 'Hard'],
-  ['bangor-2026', 'Bangor Open 2026', 'Bangor LTC', '11–17 Aug 2026', '2026-08-11', 'Artificial Grass'],
-  ['portadown-2026', 'Portadown Open 2026', 'Portadown Tennis Club', '18–24 Aug 2026', '2026-08-18', 'Hard'],
-  ['windsor-2026', 'Windsor Open 2026', 'Windsor Tennis Club', '25–31 Aug 2026', '2026-08-25', 'Hard'],
-  ['enniskillen-2026', 'Enniskillen Open 2026', 'Enniskillen Tennis Club', '1–7 Sep 2026', '2026-09-01', 'Hard'],
-];
-
-const insertTournament = db.prepare(`
-  INSERT OR IGNORE INTO tournaments (id, name, club, province, dates, start_date, surface, status, circuit_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, 'upcoming', ?)
-`);
-
-for (const [id, name, club, dates, startDate, surface] of ulsterTournaments) {
-  insertTournament.run(id, name, club, 'Ulster', dates, startDate, surface, 'ti-ulster');
-}
-
-// ─── Current real tournaments (from TournamentSoftware, March 2026) ──
-const currentTournaments = [
-  ['dl-belfast-2026', 'David Lloyd Belfast Singles Box Leagues', 'David Lloyd Belfast', 'Ulster',
-   '12 Jan – 30 Dec 2026', '2026-01-12', 'Hard', 'active', 'ti-ulster'],
-  ['larne-ladies-2026', 'Larne Ladies Tennis Ladder 2025/2026', 'Larne Bowling & Tennis Club', 'Ulster',
-   '1 Oct 2025 – 31 Mar 2026', '2025-10-01', 'Hard', 'active', 'ti-ulster'],
-  ['mt-pleasant-2026', 'Mount Pleasant Spring Tournament 2026', 'Mount Pleasant LTC', 'Leinster',
-   '9 Feb – 18 Apr 2026', '2026-02-09', 'Hard', 'active', 'ti-leinster'],
-  ['casey-tiles-2026', 'Casey Tiles Spring Leagues 2026', 'Larkspur Park TC', 'Munster',
-   '26 Jan – 8 May 2026', '2026-01-26', 'Hard', 'active', 'ti-munster'],
-];
-
-const insertCurrentTournament = db.prepare(`
-  INSERT OR IGNORE INTO tournaments (id, name, club, province, dates, start_date, surface, status, circuit_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-for (const t of currentTournaments) {
-  insertCurrentTournament.run(...t);
-}
-
-// ─── Demo draw: Ballycastle Men's Singles R1 with realistic players ──
-// These are realistic but fictional Ulster tennis player names
-const bc_r1_matches = [
-  { id: 'bc26-m1', p1: 'C. McAllister', s1: 1, p2: 'D. O\'Brien', s2: null },
-  { id: 'bc26-m2', p1: 'R. Stewart', s1: 3, p2: 'F. Gallagher', s2: null },
-  { id: 'bc26-m3', p1: 'P. Murray', s1: 2, p2: 'J. Quinn', s2: 4 },
-  { id: 'bc26-m4', p1: 'S. Campbell', s1: null, p2: 'T. Doherty', s2: 5 },
-  { id: 'bc26-m5', p1: 'K. Lavery', s1: 6, p2: 'A. McKeown', s2: null },
-  { id: 'bc26-m6', p1: 'B. Hamill', s1: null, p2: 'N. Molloy', s2: 7 },
-  { id: 'bc26-m7', p1: 'E. Donnelly', s1: null, p2: 'G. Smyth', s2: 8 },
-  { id: 'bc26-m8', p1: 'L. Magee', s1: null, p2: 'M. Fitzpatrick', s2: null },
-];
-
-const insertMatch = db.prepare(`
-  INSERT OR IGNORE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-
-for (const m of bc_r1_matches) {
-  insertMatch.run(m.id, r1Id, m.p1, m.s1, m.p2, m.s2, 'upcoming', null, null, null);
-}
-
-// ─── Some QF matches with completed results (for testing scoring) ────
-const bc_qf_matches = [
-  { id: 'bc26-qf1', p1: 'C. McAllister', s1: 1, p2: 'F. Gallagher', s2: null, status: 'completed', winner: 'C. McAllister', score: '6-3 6-4', sets: 2 },
-  { id: 'bc26-qf2', p1: 'P. Murray', s1: 2, p2: 'T. Doherty', s2: 5, status: 'completed', winner: 'T. Doherty', score: '4-6 6-3 7-5', sets: 3 },
-  { id: 'bc26-qf3', p1: 'K. Lavery', s1: 6, p2: 'N. Molloy', s2: 7, status: 'upcoming', winner: null, score: null, sets: null },
-  { id: 'bc26-qf4', p1: 'G. Smyth', s1: 8, p2: 'L. Magee', s2: null, status: 'upcoming', winner: null, score: null, sets: null },
-];
-
-for (const m of bc_qf_matches) {
-  insertMatch.run(m.id, qfId, m.p1, m.s1, m.p2, m.s2, m.status, m.winner, m.score, m.sets);
-}
-
-// ─── Demo user + predictions (so stats page has data) ───────────────
-const demoUserId = 'demo-user-01';
-db.prepare(`
-  INSERT OR IGNORE INTO users (id, username, display_name, pin_hash, avatar)
-  VALUES (?, ?, ?, ?, ?)
-`).run(demoUserId, 'demo', 'Demo Player', '0000', '🎾');
-
-// Auto-join demo user to Ulster circuit
-db.prepare(`INSERT OR IGNORE INTO circuit_members (id, circuit_id, user_id) VALUES (?, ?, ?)`)
-  .run(nanoid(12), 'ti-ulster', demoUserId);
-
-// Demo predictions for QF matches (so we can see scoring work)
-const insertPrediction = db.prepare(`
-  INSERT OR IGNORE INTO predictions (id, user_id, match_id, predicted_winner, predicted_sets, predicted_score)
-  VALUES (?, ?, ?, ?, ?, ?)
-`);
-
-insertPrediction.run(nanoid(12), demoUserId, 'bc26-qf1', 'C. McAllister', 2, '6-3 6-4');
-insertPrediction.run(nanoid(12), demoUserId, 'bc26-qf2', 'P. Murray', 2, '6-4 6-3');
-
-// Score the demo predictions
-const { scorePrediction } = require('./scoring');
-const completedMatches = db.prepare("SELECT * FROM matches WHERE status = 'completed'").all();
-for (const match of completedMatches) {
-  const preds = db.prepare('SELECT * FROM predictions WHERE match_id = ?').all(match.id);
-  for (const pred of preds) {
-    const { total: points } = scorePrediction(pred, match);
-    db.prepare('UPDATE predictions SET points_earned = ?, is_scored = 1 WHERE id = ?')
-      .run(points, pred.id);
-  }
-}
-
-// ─── Women's Singles event for Ballycastle ──────────────────────────
-const wsId = 'bc26-ws';
-db.prepare(`
-  INSERT OR IGNORE INTO events (id, tournament_id, code, name, draw_size)
-  VALUES (?, ?, ?, ?, ?)
-`).run(wsId, bcId, 'WS', "Women's Singles", 8);
-
-const wsR1Id = 'bc26-ws-r1';
-db.prepare(`
-  INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-  VALUES (?, ?, ?, ?, ?)
-`).run(wsR1Id, wsId, 'Round 1', 1, '2026-07-13T23:59:00');
-
-const bc_ws_matches = [
-  { id: 'bc26-ws-m1', p1: 'S. Mullan', s1: 1, p2: 'R. Bradley', s2: null },
-  { id: 'bc26-ws-m2', p1: 'C. Doran', s1: null, p2: 'A. Keane', s2: 2 },
-  { id: 'bc26-ws-m3', p1: 'E. McCloskey', s1: 3, p2: 'L. Hanna', s2: null },
-  { id: 'bc26-ws-m4', p1: 'F. Corr', s1: null, p2: 'M. Thompson', s2: 4 },
-];
-
-for (const m of bc_ws_matches) {
-  insertMatch.run(m.id, wsR1Id, m.p1, m.s1, m.p2, m.s2, 'upcoming', null, null, null);
-}
-
-// ─── Demo league ────────────────────────────────────────────────────
-db.prepare(`
-  INSERT OR IGNORE INTO leagues (id, name, invite_code, created_by, tournament_id, buy_in)
-  VALUES (?, ?, ?, ?, ?, ?)
-`).run('demo-league', 'Ballycastle Bandits', 'TENNIS', demoUserId, bcId, 10);
-
-db.prepare(`INSERT OR IGNORE INTO league_members (id, league_id, user_id) VALUES (?, ?, ?)`)
-  .run(nanoid(12), 'demo-league', demoUserId);
-
 console.log('✅ Database setup complete!');
 console.log(`   Database file: ${DB_PATH}`);
-console.log(`   Tournaments: ${db.prepare('SELECT COUNT(*) as c FROM tournaments').get().c}`);
-console.log(`   Events: ${db.prepare('SELECT COUNT(*) as c FROM events').get().c}`);
-console.log(`   Rounds: ${db.prepare('SELECT COUNT(*) as c FROM rounds').get().c}`);
-console.log(`   Matches: ${db.prepare('SELECT COUNT(*) as c FROM matches').get().c}`);
-console.log(`   Demo predictions scored: ${db.prepare("SELECT COUNT(*) as c FROM predictions WHERE is_scored = 1").get().c}`);
 console.log('');
 console.log('🚀 Run "npm run dev" to start the server');
-console.log('');
-console.log('📱 Demo login:  username=demo  pin=0000');
 console.log('🔑 Admin: first registered user gets admin access');
-console.log('🏆 Demo league:  invite code = TENNIS');
 
 db.close();
