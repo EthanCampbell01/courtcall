@@ -497,6 +497,9 @@ function ScraperPanel({ tournaments, showToast }) {
   const [scraping, setScraping] = useState(false);
   const [linking, setLinking] = useState(false);
   const [status, setStatus] = useState(null);
+  const [discovered, setDiscovered] = useState([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [circuits, setCircuits] = useState([]);
 
   // Get user_id for auth
   const getUserId = () => {
@@ -504,8 +507,14 @@ function ScraperPanel({ tournaments, showToast }) {
     catch { return null; }
   };
 
+  const loadDiscovered = () =>
+    fetch(`/api/admin/discovered?user_id=${getUserId() || ''}`)
+      .then(r => r.json()).then(d => setDiscovered(Array.isArray(d) ? d : [])).catch(() => {});
+
   useEffect(() => {
     fetch(`/api/admin/scraper-status?user_id=${getUserId() || ''}`).then(r => r.json()).then(setStatus).catch(console.error);
+    loadDiscovered();
+    fetch('/api/circuits').then(r => r.json()).then(d => setCircuits(Array.isArray(d) ? d : [])).catch(() => {});
   }, []);
 
   const handleLink = async () => {
@@ -544,6 +553,44 @@ function ScraperPanel({ tournaments, showToast }) {
       fetch(`/api/admin/scraper-status?user_id=${getUserId() || ''}`).then(r => r.json()).then(setStatus).catch(() => {});
     } catch (err) { alert(err.message); }
     finally { setScraping(false); }
+  };
+
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    try {
+      const result = await fetch('/api/admin/discover', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: getUserId() }),
+      }).then(r => r.json());
+      if (result.success) {
+        showToast(result.newCount > 0 ? `Found ${result.newCount} new tournament(s)! 🔍` : 'No new tournaments found');
+        loadDiscovered();
+      } else {
+        showToast('Discovery failed: ' + (result.error || 'Unknown error'));
+      }
+    } catch (err) { showToast('Discovery failed: ' + err.message); }
+    finally { setDiscovering(false); }
+  };
+
+  const handleApprove = async (disc, circuit_id, surface, province) => {
+    const result = await fetch(`/api/admin/discovered/${disc.id}/approve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: getUserId(), circuit_id, surface, province }),
+    }).then(r => r.json());
+    if (result.success) {
+      showToast('Tournament added! Scrape will run automatically 🎾');
+      setDiscovered(prev => prev.filter(d => d.id !== disc.id));
+    } else {
+      showToast('Failed: ' + (result.error || 'Unknown error'));
+    }
+  };
+
+  const handleDismiss = async (disc) => {
+    await fetch(`/api/admin/discovered/${disc.id}/dismiss`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: getUserId() }),
+    });
+    setDiscovered(prev => prev.filter(d => d.id !== disc.id));
   };
 
   return (
@@ -596,7 +643,7 @@ function ScraperPanel({ tournaments, showToast }) {
         </button>
       </div>
 
-      {/* Status */}
+      {/* Linked Tournaments */}
       {status?.linked_tournaments?.length > 0 && (
         <>
           <h3 style={{ fontSize: 13, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Linked Tournaments</h3>
@@ -611,6 +658,103 @@ function ScraperPanel({ tournaments, showToast }) {
             </div>
           ))}
         </>
+      )}
+
+      {/* Tournament Discovery */}
+      <div style={{ marginTop: 28 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <h3 style={{ fontSize: 13, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>
+            Auto-Discovery {discovered.length > 0 && <span style={{ background: 'var(--orange)', color: '#000', borderRadius: 8, padding: '1px 6px', fontSize: 10, marginLeft: 6 }}>{discovered.length}</span>}
+          </h3>
+          <button onClick={handleDiscover} disabled={discovering} style={{
+            padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'var(--card)', color: discovering ? 'var(--text-dim)' : 'var(--text)',
+            fontSize: 12, fontWeight: 600, cursor: discovering ? 'default' : 'pointer',
+          }}>
+            {discovering ? '⏳ Searching...' : '🔍 Run Discovery'}
+          </button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12, lineHeight: 1.5 }}>
+          Searches TI for tournaments not yet in CourtCall. Runs automatically every 24 hours.
+        </div>
+
+        {discovered.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '12px 0' }}>No pending discoveries</div>
+        ) : (
+          discovered.map(disc => <DiscoveryItem key={disc.id} disc={disc} circuits={circuits} onApprove={handleApprove} onDismiss={handleDismiss} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DiscoveryItem({ disc, circuits, onApprove, onDismiss }) {
+  const [expanded, setExpanded] = useState(false);
+  const [circuit_id, setCircuitId] = useState('');
+  const [surface, setSurface] = useState('Hard');
+  const [province, setProvince] = useState('Ulster');
+  const [saving, setSaving] = useState(false);
+
+  const doApprove = async () => {
+    setSaving(true);
+    await onApprove(disc, circuit_id || null, surface, province);
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{disc.name}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-dim)', wordBreak: 'break-all' }}>{disc.ti_url}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button onClick={() => setExpanded(e => !e)} style={{
+            padding: '5px 10px', borderRadius: 8, border: '1px solid var(--accent)',
+            background: 'var(--accent-glow)', color: 'var(--accent)', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          }}>
+            {expanded ? 'Cancel' : '✓ Approve'}
+          </button>
+          <button onClick={() => onDismiss(disc)} style={{
+            padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border)',
+            background: 'transparent', color: 'var(--text-dim)', fontSize: 11, cursor: 'pointer',
+          }}>
+            ✕
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <div style={{ marginBottom: 10 }}>
+            <label style={labelStyle}>Circuit</label>
+            <select value={circuit_id} onChange={e => setCircuitId(e.target.value)} style={{ ...selectStyle, marginTop: 4, fontSize: 12 }}>
+              <option value="">None / assign later</option>
+              {circuits.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Surface</label>
+              <select value={surface} onChange={e => setSurface(e.target.value)} style={{ ...selectStyle, marginTop: 4, fontSize: 12 }}>
+                {['Hard', 'Grass', 'Artificial Grass', 'Clay'].map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Province</label>
+              <select value={province} onChange={e => setProvince(e.target.value)} style={{ ...selectStyle, marginTop: 4, fontSize: 12 }}>
+                {['Ulster', 'Leinster', 'Munster', 'Connacht'].map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={doApprove} disabled={saving} style={{
+            width: '100%', padding: '10px', borderRadius: 10, border: 'none', cursor: saving ? 'default' : 'pointer',
+            background: 'linear-gradient(135deg, var(--accent), var(--accent-dim))',
+            color: 'var(--bg)', fontWeight: 700, fontSize: 13, opacity: saving ? 0.6 : 1,
+          }}>
+            {saving ? 'Adding...' : 'Add to CourtCall'}
+          </button>
+        </div>
       )}
     </div>
   );

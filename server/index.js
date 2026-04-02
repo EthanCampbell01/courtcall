@@ -39,6 +39,14 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
       db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0");
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status)");
+    db.exec(`CREATE TABLE IF NOT EXISTS discovered_tournaments (
+      id TEXT PRIMARY KEY,
+      guid TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      ti_url TEXT NOT NULL,
+      discovered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      status TEXT DEFAULT 'pending'
+    )`);
   } catch (e) { console.error('Migration error:', e.message); }
 })();
 
@@ -881,6 +889,55 @@ app.get('/api/leagues/:id/activity', (req, res) => {
   });
 
   res.json(redacted);
+});
+
+// ─── TOURNAMENT DISCOVERY ─────────────────────────────────────────────
+
+// List pending discovered tournaments
+app.get('/api/admin/discovered', adminAuth, (_req, res) => {
+  const db = getDb();
+  const items = db.prepare(
+    "SELECT * FROM discovered_tournaments WHERE status = 'pending' ORDER BY discovered_at DESC"
+  ).all();
+  res.json(items);
+});
+
+// Manually trigger discovery (optionally with a custom URL)
+app.post('/api/admin/discover', adminAuth, async (req, res) => {
+  const { url } = req.body;
+  try {
+    const { discoverNewTournaments } = require('./scraper');
+    const result = await discoverNewTournaments(url || undefined);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Approve a discovery — creates the tournament and auto-links it
+app.post('/api/admin/discovered/:id/approve', adminAuth, (req, res) => {
+  const db = getDb();
+  const { circuit_id, surface, province } = req.body;
+
+  const disc = db.prepare('SELECT * FROM discovered_tournaments WHERE id = ?').get(req.params.id);
+  if (!disc) return res.status(404).json({ error: 'Not found' });
+
+  const tournId = nanoid(12);
+  db.prepare(`
+    INSERT INTO tournaments (id, name, club, province, dates, surface, status, ti_url, circuit_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'upcoming', ?, ?)
+  `).run(tournId, disc.name, 'TBC', province || 'Ulster', 'TBC', surface || 'Hard', disc.ti_url, circuit_id || null);
+
+  db.prepare("UPDATE discovered_tournaments SET status = 'approved' WHERE id = ?").run(disc.id);
+
+  res.json({ success: true, tournament_id: tournId });
+});
+
+// Dismiss a discovery (won't appear again)
+app.post('/api/admin/discovered/:id/dismiss', adminAuth, (req, res) => {
+  const db = getDb();
+  db.prepare("UPDATE discovered_tournaments SET status = 'dismissed' WHERE id = ?").run(req.params.id);
+  res.json({ success: true });
 });
 
 // ─── SCRAPER INTEGRATION ──────────────────────────────────────────────

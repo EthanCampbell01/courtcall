@@ -434,17 +434,64 @@ function inferEventCode(eventName) {
   return eventName.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase();
 }
 
+// ─── Tournament Discovery ─────────────────────────────────────────────
+
+/**
+ * Scrape a TI search/listing page and store any new tournaments found
+ * in the `discovered_tournaments` table for admin review.
+ * @param {string} [searchUrl] - Override the default discovery URL
+ */
+async function discoverNewTournaments(searchUrl) {
+  const url = searchUrl || 'https://ti.tournamentsoftware.com/find';
+  console.log(`🔍 Discovering tournaments from ${url}...`);
+
+  let html;
+  try {
+    html = await fetchPage(url);
+  } catch (err) {
+    console.error(`❌ Discovery failed: ${err.message}`);
+    return { found: 0, newCount: 0 };
+  }
+
+  const found = parseTournamentList(html);
+  const db = getDb();
+
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO discovered_tournaments (id, guid, name, ti_url)
+    VALUES (?, ?, ?, ?)
+  `);
+
+  let newCount = 0;
+  for (const t of found) {
+    // Skip if already linked to a tournament in our DB
+    const linked = db.prepare("SELECT id FROM tournaments WHERE ti_url LIKE ?").get(`%${t.guid}%`);
+    if (linked) continue;
+
+    // Skip if already dismissed
+    const existing = db.prepare("SELECT status FROM discovered_tournaments WHERE guid = ?").get(t.guid);
+    if (existing?.status === 'dismissed') continue;
+    if (existing) continue; // already pending or approved
+
+    const result = insert.run(nanoid(12), t.guid, t.name, `https://ti.tournamentsoftware.com/tournament/${t.guid}`);
+    if (result.changes > 0) newCount++;
+  }
+
+  console.log(`🔍 Discovery complete: ${found.length} on page, ${newCount} new`);
+  return { found: found.length, newCount };
+}
+
 // ─── Scheduled Scraping ───────────────────────────────────────────────
 
 /**
  * Start the background scraper that runs periodically.
- * During tournament weeks, checks every 4 hours.
- * Otherwise, checks once a day for new draws.
+ * - Every 4 hours: check result updates for active linked tournaments
+ * - Every 24 hours: discover new tournaments from TI
  */
 function startScheduledScraper() {
   const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+  const DISCOVER_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-  console.log('⏰ Background scraper started (checking every 4 hours)');
+  console.log('⏰ Background scraper started (results every 4h, discovery every 24h)');
 
   async function runCheck() {
     const db = getDb();
@@ -497,11 +544,22 @@ function startScheduledScraper() {
     }
   }
 
+  async function runDiscovery() {
+    try {
+      await discoverNewTournaments();
+    } catch (err) {
+      console.error(`❌ Scheduled discovery error: ${err.message}`);
+    }
+  }
+
   // Run first check after 10 seconds
   setTimeout(runCheck, 10000);
+  // Run first discovery after 30 seconds (staggered)
+  setTimeout(runDiscovery, 30000);
 
   // Then run periodically
   setInterval(runCheck, CHECK_INTERVAL_MS);
+  setInterval(runDiscovery, DISCOVER_INTERVAL_MS);
 }
 
 // ─── Express Routes (add to your server) ──────────────────────────────
@@ -564,6 +622,7 @@ module.exports = {
   parseDrawPage,
   scrapeTournamentDraws,
   scrapeResultUpdates,
+  discoverNewTournaments,
   startScheduledScraper,
   addScraperRoutes,
 };
