@@ -36,7 +36,8 @@ export default function App() {
 
   // Check if user needs onboarding (no circuits joined)
   useEffect(() => {
-    if (!user) { setCheckingOnboarding(false); return; }
+    if (!user) { setCheckingOnboarding(false); setNeedsOnboarding(false); return; }
+    setCheckingOnboarding(true);
     fetch(`/api/circuits/user/${user.id}`)
       .then(r => r.json())
       .then(circuits => {
@@ -44,7 +45,7 @@ export default function App() {
         setCheckingOnboarding(false);
       })
       .catch(() => setCheckingOnboarding(false));
-  }, [user]);
+  }, [user?.id]);
 
   if (!user) return <AuthScreen />;
   if (checkingOnboarding) return null;

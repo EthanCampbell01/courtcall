@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../utils/api';
-import Tag from '../components/Tag';
 
 /**
  * Stats page — shows your prediction stats, streaks, h2h with friends,
@@ -23,7 +22,7 @@ export default function Stats() {
 
   const scored = predictions.filter(p => p.is_scored);
   const correct = scored.filter(p => p.points_earned > 0);
-  const totalPoints = scored.reduce((a, p) => a + p.points_earned, 0);
+  const totalPoints = scored.reduce((a, p) => a + (p.points_earned || 0), 0);
   const winRate = scored.length > 0 ? Math.round((correct.length / scored.length) * 100) : 0;
 
   // Calculate current streak
@@ -124,7 +123,7 @@ export default function Stats() {
               Recent Form
             </div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {sortedScored.slice(0, 20).map((p, i) => {
+              {sortedScored.slice(0, 20).map((p) => {
                 const won = p.points_earned > 0;
                 return (
                   <div key={p.id} title={`${p.player1_name} vs ${p.player2_name}: ${won ? 'Correct' : 'Wrong'}`} style={{

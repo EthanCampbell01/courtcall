@@ -8,22 +8,23 @@ export default function AdminPanel({ showToast }) {
   const [selectedTournament, setSelectedTournament] = useState(null);
   const [tournamentDetail, setTournamentDetail] = useState(null);
   const [isAdmin, setIsAdmin] = useState(null); // null = checking, true/false = known
+  const [adminCheckError, setAdminCheckError] = useState(false);
 
-  // Check admin access by trying to load tournaments (which all users can do)
-  // and then verify with a lightweight admin call
+  const checkAdmin = () => {
+    const user = (() => { try { return JSON.parse(window.localStorage.getItem('courtcall_user')); } catch { return null; } })();
+    if (!user) { setIsAdmin(false); return; }
+    setIsAdmin(null);
+    setAdminCheckError(false);
+    fetch(`/api/auth/is-admin?user_id=${user.id}`)
+      .then(r => r.json())
+      .then(d => setIsAdmin(d.isAdmin === true))
+      .catch(() => setAdminCheckError(true));
+  };
+
+  // Check admin access on mount
   useEffect(() => {
     api.getTournaments().then(setTournaments).catch(console.error);
-    // Test admin access with a scoring endpoint that doesn't require auth
-    // then test an actual admin endpoint
-    const user = (() => { try { return JSON.parse(window.localStorage.getItem('courtcall_user')); } catch { return null; } })();
-    if (user) {
-      fetch(`/api/auth/is-admin?user_id=${user.id}`)
-        .then(r => r.json())
-        .then(d => setIsAdmin(d.isAdmin === true))
-        .catch(() => setIsAdmin(false));
-    } else {
-      setIsAdmin(false);
-    }
+    checkAdmin();
   }, []);
 
   useEffect(() => {
@@ -57,7 +58,15 @@ export default function AdminPanel({ showToast }) {
       )}
 
       {isAdmin === null && (
-        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>Checking access...</div>
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+          {adminCheckError ? (
+            <>
+              <div style={{ marginBottom: 12 }}>Failed to check admin access — network error</div>
+              <button onClick={checkAdmin} style={{ padding: '8px 16px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text)', fontSize: 13, cursor: 'pointer' }}>
+                Retry
+              </button>
+            </>
+          ) : 'Checking access...'}</div>
       )}
 
       {isAdmin && (

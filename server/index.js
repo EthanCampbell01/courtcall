@@ -837,7 +837,7 @@ app.get('/api/h2h/:userId1/:userId2', (req, res) => {
     user2: { id: userId2, ...u2, totalPoints: user2Total, matchesWon: user2Wins },
     draws,
     totalMatches: scored.length,
-    matches: visibleMatches.slice(0, 20),
+    matches: scored.slice(0, 20),
   });
 });
 
@@ -884,8 +884,9 @@ app.get('/api/leagues/:id/activity', (req, res) => {
 });
 
 // ─── SCRAPER INTEGRATION ──────────────────────────────────────────────
-const { addScraperRoutes } = require('./scraper');
+const { addScraperRoutes, startScheduledScraper } = require('./scraper');
 addScraperRoutes(app, adminAuth);
+startScheduledScraper();
 
 // Auto-scraper (Puppeteer-based) — only load if puppeteer is available
 try {
