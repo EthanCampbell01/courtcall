@@ -44,9 +44,13 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
       guid TEXT UNIQUE NOT NULL,
       name TEXT NOT NULL,
       ti_url TEXT NOT NULL,
+      location TEXT,
+      suggested_circuit_id TEXT,
       discovered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       status TEXT DEFAULT 'pending'
     )`);
+    try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN location TEXT'); } catch (e) { /* already exists */ }
+    try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN suggested_circuit_id TEXT'); } catch (e) { /* already exists */ }
   } catch (e) { console.error('Migration error:', e.message); }
 })();
 

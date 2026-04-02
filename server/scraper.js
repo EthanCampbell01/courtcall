@@ -135,9 +135,14 @@ function parseTournamentList(html) {
   while ((match = searchRegex.exec(html)) !== null) {
     const guid = match[1];
     const name = decodeHTMLEntities(match[2].trim());
-    if (name && !tournaments.find(t => t.guid === guid)) {
-      tournaments.push({ guid, name });
-    }
+    if (!name || tournaments.find(t => t.guid === guid)) continue;
+
+    // Extract location from the next ~800 chars (icon-marker → nav-link__value)
+    const following = html.slice(match.index, match.index + 800);
+    const locMatch = following.match(/icon-marker[\s\S]{1,300}?nav-link__value[^>]*>\s*([^<]+?)\s*<\/span>/);
+    const location = locMatch ? decodeHTMLEntities(locMatch[1].trim()) : null;
+
+    tournaments.push({ guid, name, location });
   }
 
   // Fallback: /tournament/{GUID} pattern used on some older TI pages
@@ -146,11 +151,35 @@ function parseTournamentList(html) {
     const guid = match[1];
     const name = decodeHTMLEntities(match[2].trim());
     if (name && !tournaments.find(t => t.guid === guid)) {
-      tournaments.push({ guid, name });
+      tournaments.push({ guid, name, location: null });
     }
   }
 
   return tournaments;
+}
+
+/**
+ * Infer a circuit ID from a TI location string like "Club Name | Dublin"
+ * or "Club Name | BELFAST, Northern Ireland"
+ */
+function inferCircuitFromLocation(location) {
+  if (!location) return null;
+  const l = location.toUpperCase();
+
+  const ulster = ['NORTHERN IRELAND', 'BELFAST', 'ANTRIM', 'ARMAGH', 'FERMANAGH',
+    'DERRY', 'LONDONDERRY', 'TYRONE', 'LARNE', 'BANGOR', 'LISBURN', 'BALLYMENA',
+    'NEWRY', 'OMAGH', 'ENNISKILLEN', 'COLERAINE', 'DUNGANNON', 'STRABANE',
+    'CARRICKFERGUS', 'NEWTOWNABBEY', 'CASTLEDERG', 'DOWN ', ', DOWN'];
+  const leinster = ['DUBLIN', 'WICKLOW', 'KILDARE', 'MEATH', 'LOUTH', 'WEXFORD',
+    'KILKENNY', 'CARLOW', 'LAOIS', 'OFFALY', 'WESTMEATH', 'LONGFORD',
+    'BRAY', 'DROGHEDA', 'DUNDALK', 'NAAS', 'NAVAN', 'PORTLAOISE', 'MULLINGAR'];
+  const munster = ['CORK', 'KERRY', 'LIMERICK', 'TIPPERARY', 'WATERFORD', 'CLARE',
+    'CASHEL', 'ENNIS', 'TRALEE', 'KILLARNEY', 'DUNGARVAN', 'CLONMEL'];
+
+  if (ulster.some(k => l.includes(k))) return 'ti-ulster';
+  if (leinster.some(k => l.includes(k))) return 'ti-leinster';
+  if (munster.some(k => l.includes(k))) return 'ti-munster';
+  return null;
 }
 
 /**
@@ -553,8 +582,8 @@ async function discoverNewTournaments(searchUrl) {
   });
 
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO discovered_tournaments (id, guid, name, ti_url)
-    VALUES (?, ?, ?, ?)
+    INSERT OR IGNORE INTO discovered_tournaments (id, guid, name, ti_url, location, suggested_circuit_id)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   let newCount = 0;
@@ -568,7 +597,10 @@ async function discoverNewTournaments(searchUrl) {
     if (existing?.status === 'dismissed') continue;
     if (existing) continue; // already pending or approved
 
-    const result = insert.run(nanoid(12), t.guid, t.name, `https://ti.tournamentsoftware.com/tournament/${t.guid}`);
+    const suggestedCircuit = inferCircuitFromLocation(t.location);
+    const result = insert.run(nanoid(12), t.guid, t.name,
+      `https://ti.tournamentsoftware.com/tournament/${t.guid}`,
+      t.location || null, suggestedCircuit);
     if (result.changes > 0) newCount++;
   }
 
@@ -719,6 +751,7 @@ module.exports = {
   scrapeTournamentDraws,
   scrapeResultUpdates,
   discoverNewTournaments,
+  inferCircuitFromLocation,
   startScheduledScraper,
   addScraperRoutes,
 };

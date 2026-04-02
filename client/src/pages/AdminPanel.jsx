@@ -498,6 +498,7 @@ function ScraperPanel({ tournaments, showToast }) {
   const [linking, setLinking] = useState(false);
   const [status, setStatus] = useState(null);
   const [discovered, setDiscovered] = useState([]);
+  const [discoverySearch, setDiscoverySearch] = useState('');
   const [discovering, setDiscovering] = useState(false);
   const [circuits, setCircuits] = useState([]);
 
@@ -678,21 +679,88 @@ function ScraperPanel({ tournaments, showToast }) {
           Searches TI for tournaments not yet in CourtCall. Runs automatically every 24 hours.
         </div>
 
-        {discovered.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '12px 0' }}>No pending discoveries</div>
-        ) : (
-          discovered.map(disc => <DiscoveryItem key={disc.id} disc={disc} circuits={circuits} onApprove={handleApprove} onDismiss={handleDismiss} />)
+        {discovered.length > 0 && (
+          <input
+            value={discoverySearch} onChange={e => setDiscoverySearch(e.target.value)}
+            placeholder="Search by name or location..."
+            style={{ ...inputStyle2, marginBottom: 16, fontSize: 12, padding: '10px 14px' }}
+          />
         )}
+
+        <DiscoveryGroups
+          discovered={discovered}
+          search={discoverySearch}
+          circuits={circuits}
+          onApprove={handleApprove}
+          onDismiss={handleDismiss}
+        />
       </div>
     </div>
   );
 }
 
+const CIRCUIT_LABELS = {
+  'ti-ulster':   { label: 'Ulster', emoji: '☘️' },
+  'ti-leinster': { label: 'Leinster', emoji: '☘️' },
+  'ti-munster':  { label: 'Munster', emoji: '☘️' },
+  'bucs-tennis': { label: 'BUCS', emoji: '🎓' },
+};
+
+function DiscoveryGroups({ discovered, search, circuits, onApprove, onDismiss }) {
+  const q = search.toLowerCase();
+  const filtered = discovered.filter(d =>
+    !q || d.name.toLowerCase().includes(q) || (d.location || '').toLowerCase().includes(q)
+  );
+
+  if (filtered.length === 0) {
+    return <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '12px 0' }}>
+      {discovered.length === 0 ? 'No pending discoveries' : 'No results for that search'}
+    </div>;
+  }
+
+  // Group by suggested_circuit_id
+  const groups = {};
+  for (const d of filtered) {
+    const key = d.suggested_circuit_id || '__none__';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(d);
+  }
+
+  // Ordered: known circuits first, then unassigned
+  const knownCircuits = Object.keys(CIRCUIT_LABELS);
+  const order = [...knownCircuits.filter(k => groups[k]), ...(groups['__none__'] ? ['__none__'] : [])];
+
+  return (
+    <>
+      {order.map(key => {
+        const items = groups[key];
+        const meta = CIRCUIT_LABELS[key];
+        return (
+          <div key={key} style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {meta ? `${meta.emoji} ${meta.label}` : '⚪ Unassigned'} <span style={{ fontWeight: 400 }}>({items.length})</span>
+            </div>
+            {items.map(disc => (
+              <DiscoveryItem key={disc.id} disc={disc} circuits={circuits} onApprove={onApprove} onDismiss={onDismiss} />
+            ))}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function DiscoveryItem({ disc, circuits, onApprove, onDismiss }) {
   const [expanded, setExpanded] = useState(false);
-  const [circuit_id, setCircuitId] = useState('');
+  const [circuit_id, setCircuitId] = useState(disc.suggested_circuit_id || '');
   const [surface, setSurface] = useState('Hard');
-  const [province, setProvince] = useState('Ulster');
+  const [province, setProvince] = useState(() => {
+    const cid = disc.suggested_circuit_id;
+    if (cid === 'ti-ulster') return 'Ulster';
+    if (cid === 'ti-leinster') return 'Leinster';
+    if (cid === 'ti-munster') return 'Munster';
+    return 'Ulster';
+  });
   const [saving, setSaving] = useState(false);
 
   const doApprove = async () => {
@@ -706,7 +774,7 @@ function DiscoveryItem({ disc, circuits, onApprove, onDismiss }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{disc.name}</div>
-          <div style={{ fontSize: 10, color: 'var(--text-dim)', wordBreak: 'break-all' }}>{disc.ti_url}</div>
+          {disc.location && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>📍 {disc.location}</div>}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setExpanded(e => !e)} style={{
