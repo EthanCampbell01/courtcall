@@ -53,39 +53,33 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN suggested_circuit_id TEXT'); } catch (e) { /* already exists */ }
 
     // ─── Remove fake seed tournaments ────────────────────────────────
-    const fakeTournamentIds = [
-      'ballycastle-2026', 'ciyms-2026', 'cavehill-2026', 'bbc-2026',
-      'bangor-2026', 'portadown-2026', 'windsor-2026', 'enniskillen-2026',
-      'dl-belfast-2026', 'larne-ladies-2026', 'mt-pleasant-2026', 'casey-tiles-2026',
-    ];
-    const placeholders = fakeTournamentIds.map(() => '?').join(',');
-    // Delete in FK order: predictions → matches → rounds → events → tournaments → leagues
-    db.prepare(`DELETE FROM predictions WHERE match_id IN (
-      SELECT m.id FROM matches m
-      JOIN rounds r ON m.round_id = r.id
-      JOIN events e ON r.event_id = e.id
-      WHERE e.tournament_id IN (${placeholders})
-    )`).run(...fakeTournamentIds);
-    db.prepare(`DELETE FROM matches WHERE round_id IN (
-      SELECT r.id FROM rounds r
-      JOIN events e ON r.event_id = e.id
-      WHERE e.tournament_id IN (${placeholders})
-    )`).run(...fakeTournamentIds);
-    db.prepare(`DELETE FROM rounds WHERE event_id IN (
-      SELECT id FROM events WHERE tournament_id IN (${placeholders})
-    )`).run(...fakeTournamentIds);
-    db.prepare(`DELETE FROM events WHERE tournament_id IN (${placeholders})`).run(...fakeTournamentIds);
-    db.prepare(`DELETE FROM leagues WHERE tournament_id IN (${placeholders})`).run(...fakeTournamentIds);
-    db.prepare(`DELETE FROM tournaments WHERE id IN (${placeholders})`).run(...fakeTournamentIds);
-
-    // Remove demo user and demo league
-    db.prepare("DELETE FROM league_members WHERE league_id = 'demo-league'").run();
-    db.prepare("DELETE FROM leagues WHERE id = 'demo-league'").run();
-    db.prepare("DELETE FROM predictions WHERE user_id = 'demo-user-01'").run();
-    db.prepare("DELETE FROM circuit_members WHERE user_id = 'demo-user-01'").run();
-    db.prepare("DELETE FROM users WHERE id = 'demo-user-01'").run();
-
-    console.log('✅ Fake seed data removed');
+    try {
+      const fakeTournamentIds = [
+        'ballycastle-2026', 'ciyms-2026', 'cavehill-2026', 'bbc-2026',
+        'bangor-2026', 'portadown-2026', 'windsor-2026', 'enniskillen-2026',
+        'dl-belfast-2026', 'larne-ladies-2026', 'mt-pleasant-2026', 'casey-tiles-2026',
+      ];
+      const p = fakeTournamentIds.map(() => '?').join(',');
+      // Correct FK order: leagues/league_members first, then predictions → matches → rounds → events → tournaments
+      db.prepare(`DELETE FROM league_members WHERE league_id IN (SELECT id FROM leagues WHERE tournament_id IN (${p}))`).run(...fakeTournamentIds);
+      db.prepare(`DELETE FROM leagues WHERE tournament_id IN (${p})`).run(...fakeTournamentIds);
+      db.prepare(`DELETE FROM predictions WHERE match_id IN (
+        SELECT m.id FROM matches m JOIN rounds r ON m.round_id=r.id JOIN events e ON r.event_id=e.id WHERE e.tournament_id IN (${p})
+      )`).run(...fakeTournamentIds);
+      db.prepare(`DELETE FROM matches WHERE round_id IN (
+        SELECT r.id FROM rounds r JOIN events e ON r.event_id=e.id WHERE e.tournament_id IN (${p})
+      )`).run(...fakeTournamentIds);
+      db.prepare(`DELETE FROM rounds WHERE event_id IN (SELECT id FROM events WHERE tournament_id IN (${p}))`).run(...fakeTournamentIds);
+      db.prepare(`DELETE FROM events WHERE tournament_id IN (${p})`).run(...fakeTournamentIds);
+      db.prepare(`DELETE FROM tournaments WHERE id IN (${p})`).run(...fakeTournamentIds);
+      // Remove demo league and demo user
+      db.prepare("DELETE FROM league_members WHERE league_id = 'demo-league'").run();
+      db.prepare("DELETE FROM leagues WHERE id = 'demo-league'").run();
+      db.prepare("DELETE FROM predictions WHERE user_id = 'demo-user-01'").run();
+      db.prepare("DELETE FROM circuit_members WHERE user_id = 'demo-user-01'").run();
+      db.prepare("DELETE FROM users WHERE id = 'demo-user-01'").run();
+      console.log('✅ Fake seed data removed');
+    } catch (e) { console.error('Cleanup migration error:', e.message); }
   } catch (e) { console.error('Migration error:', e.message); }
 })();
 
