@@ -621,9 +621,13 @@ async function discoverNewTournaments(searchUrl) {
     return true;
   });
 
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO discovered_tournaments (id, guid, name, ti_url, location, suggested_circuit_id)
+  const upsert = db.prepare(`
+    INSERT INTO discovered_tournaments (id, guid, name, ti_url, location, suggested_circuit_id)
     VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(guid) DO UPDATE SET
+      location = excluded.location,
+      suggested_circuit_id = excluded.suggested_circuit_id
+    WHERE status = 'pending'
   `);
 
   let newCount = 0;
@@ -632,16 +636,17 @@ async function discoverNewTournaments(searchUrl) {
     const linked = db.prepare("SELECT id FROM tournaments WHERE ti_url LIKE ?").get(`%${t.guid}%`);
     if (linked) continue;
 
-    // Skip if already dismissed
+    // Skip if already dismissed or approved
     const existing = db.prepare("SELECT status FROM discovered_tournaments WHERE guid = ?").get(t.guid);
     if (existing?.status === 'dismissed') continue;
-    if (existing) continue; // already pending or approved
+    if (existing?.status === 'approved') continue;
 
     const suggestedCircuit = inferCircuitFromLocation(t.location);
-    const result = insert.run(nanoid(12), t.guid, t.name,
+    const isNew = !existing;
+    upsert.run(nanoid(12), t.guid, t.name,
       `https://ti.tournamentsoftware.com/tournament/${t.guid}`,
       t.location || null, suggestedCircuit);
-    if (result.changes > 0) newCount++;
+    if (isNew) newCount++;
   }
 
   console.log(`🔍 Discovery complete: ${unique.length} unique found, ${newCount} new`);

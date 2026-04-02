@@ -900,10 +900,21 @@ app.get('/api/leagues/:id/activity', (req, res) => {
 // List pending discovered tournaments
 app.get('/api/admin/discovered', adminAuth, (_req, res) => {
   const db = getDb();
+  const { inferCircuitFromLocation } = require('./scraper');
   const items = db.prepare(
     "SELECT * FROM discovered_tournaments WHERE status = 'pending' ORDER BY discovered_at DESC"
   ).all();
-  res.json(items);
+  // Backfill suggested_circuit_id on-the-fly for rows stored before location extraction was added
+  const enriched = items.map(item => {
+    if (item.suggested_circuit_id) return item;
+    const inferred = inferCircuitFromLocation(item.location);
+    if (inferred) {
+      db.prepare("UPDATE discovered_tournaments SET suggested_circuit_id = ? WHERE id = ?").run(inferred, item.id);
+      return { ...item, suggested_circuit_id: inferred };
+    }
+    return item;
+  });
+  res.json(enriched);
 });
 
 // Manually trigger discovery (optionally with a custom URL)
