@@ -414,8 +414,32 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   }
   await delay(REQUEST_DELAY_MS);
 
-  const { events } = parseTournamentPage(tournamentHtml);
+  let { events } = parseTournamentPage(tournamentHtml);
   console.log(`   Found ${events.length} events: ${events.map(e => e.name).join(', ')}`);
+
+  // Fallback: if tournament page returned no draw links (may use JS tabs),
+  // probe draw IDs 1-10 directly to discover which draws exist.
+  if (events.length === 0) {
+    console.log('   No events from tournament page — probing draw IDs 1-10...');
+    for (let drawId = 1; drawId <= 10; drawId++) {
+      const probeUrl = `${BASE_URL}/sport/draws.aspx?id=${tournamentGuid}&draw=${drawId}`;
+      try {
+        const probeHtml = await fetchPage(probeUrl);
+        await delay(REQUEST_DELAY_MS);
+        const probeMatches = parseDrawPage(probeHtml);
+        if (probeMatches.length > 0) {
+          // Extract event name from page title or use generic name
+          const titleM = probeHtml.match(/<title>([^<|–-]{3,60})/i);
+          const probeName = titleM ? decodeHTMLEntities(titleM[1].trim()) : `Draw ${drawId}`;
+          events.push({ tournamentGuid, drawId: String(drawId), name: probeName });
+          console.log(`   Found draw ${drawId}: ${probeName} (${probeMatches.length} matches)`);
+        }
+      } catch (_e) {
+        // 404 or empty draw — stop probing
+        break;
+      }
+    }
+  }
 
   const db = getDb();
   const results = { events: 0, rounds: 0, matches: 0 };
@@ -458,18 +482,18 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
           deadline.setHours(23, 59, 0, 0);
 
           db.prepare(`
-            INSERT OR REPLACE INTO rounds (id, event_id, name, round_order, prediction_deadline)
+            INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
             VALUES (?, ?, ?, ?, ?)
           `).run(roundId, eventId, rounds[r].name, r + 1, deadline.toISOString());
           results.rounds++;
 
-          // Insert matches for this round
+          // Upsert matches for this round — deterministic ID so re-scraping updates scores
           for (let m = 0; m < roundMatchCount && matchIdx < matches.length; m++) {
             const match = matches[matchIdx++];
-            const matchId = nanoid(12);
+            const matchId = `${roundId}-m${m + 1}`;
 
             db.prepare(`
-              INSERT INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
+              INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               matchId, roundId,
