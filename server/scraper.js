@@ -456,16 +456,15 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
 
       if (matches.length === 0) continue;
 
-      // Group matches by round name (TI tells us exactly which round each match is in)
-      const roundOrder = [];
+      // Group matches by round name, then sort rounds into correct order
       const byRound = {};
       for (const match of matches) {
-        if (!byRound[match.roundName]) {
-          roundOrder.push(match.roundName);
-          byRound[match.roundName] = [];
-        }
+        if (!byRound[match.roundName]) byRound[match.roundName] = [];
         byRound[match.roundName].push(match);
       }
+      const roundOrder = Object.keys(byRound).sort(
+        (a, b) => getRoundSortOrder(a) - getRoundSortOrder(b)
+      );
 
       // Upsert rounds and matches
       for (let r = 0; r < roundOrder.length; r++) {
@@ -486,10 +485,12 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
 
         for (let m = 0; m < roundMatches.length; m++) {
           const match = roundMatches[m];
-          // Use TI's own match ID if available, otherwise fall back to position
-          const matchId = match.tiMatchId
+          // TI box leagues use id="match_0" for all matches — not unique.
+          // Fall back to player-name-based ID which is stable across re-scrapes.
+          const tiIdUsable = match.tiMatchId && match.tiMatchId !== '0';
+          const matchId = tiIdUsable
             ? `${eventId}-ti${match.tiMatchId}`
-            : `${roundId}-m${m + 1}`;
+            : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
 
           db.prepare(`
             INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
@@ -576,8 +577,24 @@ function inferEventCode(eventName) {
   if (lower.includes('boys') || lower.includes('u18') || lower.includes('u16')) return 'JBS';
   if (lower.includes('girls')) return 'JGS';
   if (lower.includes('veteran') || lower.includes('over')) return 'VET';
-  // Default: use first 3 chars uppercase
-  return eventName.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase();
+  // Default: preserve name without spaces up to 6 chars (e.g. "BOX A" → "BOXA", "BOX B" → "BOXB")
+  return eventName.replace(/\s+/g, '').toUpperCase().slice(0, 6);
+}
+
+/**
+ * Sort round names into logical tournament order.
+ * "Round 1" < "Round 2" < ... < "Quarter final" < "Semi final" < "Final"
+ */
+function getRoundSortOrder(name) {
+  const lower = name.toLowerCase();
+  if (lower === 'final') return 10000;
+  if (lower.includes('semi')) return 9000;
+  if (lower.includes('quarter')) return 8000;
+  if (lower.includes('round of 16')) return 7000;
+  if (lower.includes('round of 32')) return 6000;
+  const numM = lower.match(/round\s+(\d+)/);
+  if (numM) return parseInt(numM[1]);
+  return 5000;
 }
 
 // ─── Tournament Discovery ─────────────────────────────────────────────
