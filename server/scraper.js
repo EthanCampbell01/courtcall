@@ -791,6 +791,56 @@ function addScraperRoutes(app, adminAuth) {
     res.json({ success: true });
   });
 
+  // Debug: fetch a TI tournament page and return what the parser sees
+  // GET /api/admin/scrape-debug?ti_guid=GUID
+  app.get('/api/admin/scrape-debug', auth, async (req, res) => {
+    const { ti_guid } = req.query;
+    if (!ti_guid) return res.status(400).json({ error: 'ti_guid required' });
+
+    try {
+      // Fetch the tournament page
+      const tournamentUrl = `${BASE_URL}/tournament/${ti_guid}`;
+      const html = await fetchPage(tournamentUrl);
+
+      const { events } = parseTournamentPage(html);
+
+      // Also probe draw IDs 1-5 to see which exist
+      const probeResults = [];
+      for (let drawId = 1; drawId <= 5; drawId++) {
+        const drawUrl = `${BASE_URL}/sport/draws.aspx?id=${ti_guid}&draw=${drawId}`;
+        try {
+          const drawHtml = await fetchPage(drawUrl);
+          const drawMatches = parseDrawPage(drawHtml);
+          const titleM = drawHtml.match(/<title>([^<]{3,80})/i);
+          probeResults.push({
+            drawId,
+            title: titleM ? titleM[1].trim() : '(no title)',
+            matchesFound: drawMatches.length,
+            sample: drawMatches.slice(0, 3),
+          });
+          await delay(REQUEST_DELAY_MS);
+        } catch (e) {
+          probeResults.push({ drawId, error: e.message });
+          break;
+        }
+      }
+
+      res.json({
+        tournamentUrl,
+        htmlLength: html.length,
+        eventsFromTournamentPage: events,
+        drawProbes: probeResults,
+        // Snippet of HTML around draw links (for debugging)
+        drawLinkSnippet: (() => {
+          const idx = html.toLowerCase().indexOf('draws.aspx');
+          return idx >= 0 ? html.slice(Math.max(0, idx - 100), idx + 200) : 'NOT FOUND in HTML';
+        })(),
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Check scraper status
   app.get('/api/admin/scraper-status', auth, (_req, res) => {
     const db = getDb();
