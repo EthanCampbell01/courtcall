@@ -627,18 +627,26 @@ function ScraperPanel({ tournaments, showToast }) {
         </div>
       </div>
 
+      {!selectedTournament && (
+        <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 8 }}>
+          ⬆ Select a tournament from the dropdown above first
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
         <button onClick={handleLink} disabled={!selectedTournament || !tiUrl.trim() || linking} style={{
-          flex: 1, padding: 12, borderRadius: 12, border: 'none', cursor: 'pointer',
+          flex: 1, padding: 12, borderRadius: 12, border: 'none',
+          cursor: (!selectedTournament || !tiUrl.trim() || linking) ? 'not-allowed' : 'pointer',
           background: 'var(--blue-glow)', color: 'var(--blue)', fontSize: 13, fontWeight: 600,
-          opacity: linking ? 0.7 : 1,
+          opacity: (!selectedTournament || !tiUrl.trim() || linking) ? 0.4 : 1,
         }}>
           {linking ? 'Linking...' : '🔗 Link'}
         </button>
         <button onClick={handleScrape} disabled={!selectedTournament || scraping} style={{
-          flex: 2, padding: 12, borderRadius: 12, border: 'none', cursor: 'pointer',
+          flex: 2, padding: 12, borderRadius: 12, border: 'none',
+          cursor: (!selectedTournament || scraping) ? 'not-allowed' : 'pointer',
           background: scraping ? 'var(--border)' : 'linear-gradient(135deg, var(--accent), var(--accent-dim))',
           color: scraping ? 'var(--text-dim)' : 'var(--bg)', fontSize: 13, fontWeight: 700,
+          opacity: (!selectedTournament || scraping) ? 0.4 : 1,
         }}>
           {scraping ? '⏳ Scraping...' : '🎾 Scrape Now'}
         </button>
@@ -652,9 +660,28 @@ function ScraperPanel({ tournaments, showToast }) {
             <div key={t.id} style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 8 }}>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t.name}</div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all', marginBottom: 6 }}>{t.ti_url}</div>
-              <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
                 <span style={{ color: 'var(--accent)', fontFamily: 'var(--mono)' }}>{t.match_count} matches</span>
                 <span style={{ color: 'var(--blue)', fontFamily: 'var(--mono)' }}>{t.completed_count} completed</span>
+                <button
+                  onClick={async () => {
+                    const guidMatch = t.ti_url.match(/([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})/i);
+                    if (!guidMatch) return;
+                    const res = await fetch('/api/admin/scrape', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ tournament_id: t.id, ti_guid: guidMatch[1], user_id: getUserId() }),
+                    }).then(r => r.json());
+                    if (res.success) {
+                      showToast(`Scraped! ${res.matches} matches imported 🎾`);
+                      fetch(`/api/admin/scraper-status?user_id=${getUserId() || ''}`).then(r => r.json()).then(setStatus).catch(() => {});
+                    } else {
+                      showToast('Scrape failed: ' + (res.error || 'Unknown error'));
+                    }
+                  }}
+                  style={{ marginLeft: 'auto', padding: '4px 10px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: 'var(--bg)', fontSize: 11, fontWeight: 600 }}
+                >
+                  Scrape
+                </button>
               </div>
             </div>
           ))}
