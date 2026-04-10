@@ -413,23 +413,43 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   const db = getDb();
   const results = { events: 0, rounds: 0, matches: 0 };
 
-  // Extract dates and club from landing page and update tournament record if still TBC
+  // Extract dates and club from landing page
   const existing = db.prepare('SELECT dates, club FROM tournaments WHERE id = ?').get(tournamentId);
-  if (existing && (existing.dates === 'TBC' || existing.club === 'TBC')) {
-    // Dates: look for patterns like "7 April 2026 - 10 April 2026" or "07/04/2026"
-    const dateM = landingHtml.match(/(\d{1,2}\s+\w+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+\w+\s+\d{4})/i)
-      || landingHtml.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})/);
-    // Club/venue: look for nav-link__value near location icon
+  if (existing) {
+    // TI uses M/D/YYYY format e.g. "3/30/2026" — collect all slash-dates and use first two
+    const slashDates = landingHtml.match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || [];
+    // Also try written format "7 April 2026 – 10 April 2026"
+    const writtenDateM = landingHtml.match(/(\d{1,2}\s+\w+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+\w+\s+\d{4})/i);
+    // Club: text before the | separator in the location field
     const clubM = landingHtml.match(/icon-marker[\s\S]{1,200}?nav-link__value[^>]*>\s*([^<|]+?)\s*\|/);
+
     const updates = {};
-    if (dateM && existing.dates === 'TBC') updates.dates = `${dateM[1]} – ${dateM[2]}`;
-    if (clubM && existing.club === 'TBC') updates.club = clubM[1].trim();
+    if (existing.dates === 'TBC') {
+      if (writtenDateM) updates.dates = `${writtenDateM[1]} – ${writtenDateM[2]}`;
+      else if (slashDates.length >= 2) updates.dates = `${slashDates[0]} – ${slashDates[slashDates.length - 1]}`;
+      else if (slashDates.length === 1) updates.dates = slashDates[0];
+    }
+    if (existing.club === 'TBC' && clubM) updates.club = clubM[1].trim();
     if (Object.keys(updates).length > 0) {
-      const sets = Object.entries(updates).map(([k]) => `${k} = ?`).join(', ');
+      const sets = Object.keys(updates).map(k => `${k} = ?`).join(', ');
       db.prepare(`UPDATE tournaments SET ${sets} WHERE id = ?`).run(...Object.values(updates), tournamentId);
-      console.log(`   📅 Updated tournament metadata:`, updates);
+      console.log(`   📅 Updated metadata:`, updates);
     }
   }
+
+  // Clear ALL stale events/rounds/matches for this tournament before re-importing.
+  // Previous scrapes may have used different ID schemes, leaving orphaned TBD data.
+  // We do this AFTER updating metadata (above) but BEFORE inserting fresh data.
+  const oldEvents = db.prepare('SELECT id FROM events WHERE tournament_id = ?').all(tournamentId);
+  for (const ev of oldEvents) {
+    const oldRounds = db.prepare('SELECT id FROM rounds WHERE event_id = ?').all(ev.id);
+    for (const rd of oldRounds) {
+      db.prepare('DELETE FROM matches WHERE round_id = ?').run(rd.id);
+    }
+    db.prepare('DELETE FROM rounds WHERE event_id = ?').run(ev.id);
+  }
+  db.prepare('DELETE FROM events WHERE tournament_id = ?').run(tournamentId);
+  console.log(`   🧹 Cleared ${oldEvents.length} stale event(s)`);
 
   // 2. For each event, fetch AJAX draw content and import
   for (const event of events) {
@@ -437,10 +457,12 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
     // Use drawId in eventId to handle multiple draws with same code (e.g. two MS events)
     const eventId = `${tournamentId}-${eventCode}-${event.drawId}`.toLowerCase();
 
+    // Use the full draw name as the display code so tabs are readable
+    // (e.g. "Boys U/14 Plate", "BOX A", "Men's Singles")
     db.prepare(`
       INSERT OR REPLACE INTO events (id, tournament_id, code, name, draw_size)
       VALUES (?, ?, ?, ?, ?)
-    `).run(eventId, tournamentId, eventCode, event.name, 8);
+    `).run(eventId, tournamentId, event.name, event.name, 8);
     results.events++;
 
     // Fetch AJAX draw content (the actual bracket/results)
