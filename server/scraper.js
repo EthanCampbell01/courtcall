@@ -223,115 +223,103 @@ function inferCircuitFromLocation(location) {
 }
 
 /**
- * Parse a tournament page to extract event/draw links.
- * Events (MS, WS, MD, etc.) appear as draw links on the tournament page.
+ * Parse the TI draws landing page (/sport/draws.aspx?id=GUID) to find individual
+ * draw event links. Each link is: draw.aspx?id=GUID&draw=N with the event name
+ * as link text.
  */
-function parseTournamentPage(html) {
+function parseTournamentPage(html, tournamentGuid) {
   const events = [];
 
-  // Draw links: /sport/draws.aspx?id=GUID&draw=DRAW_ID
-  const drawRegex = /href="[^"]*draws\.aspx\?id=([A-F0-9-]+)&amp;draw=(\d+)"[^>]*>([^<]+)/gi;
+  // Draws landing page links: draw.aspx?id=GUID&draw=N (relative URL, singular draw.aspx)
+  // Also handles &amp; encoding
+  const drawRegex = /href="draw\.aspx\?id=([A-F0-9-]+)&(?:amp;)?draw=(\d+)"[^>]*class="nowrap">([^<]+)/gi;
   let match;
   while ((match = drawRegex.exec(html)) !== null) {
-    const tournamentGuid = match[1];
-    const drawId = match[2];
-    const eventName = decodeHTMLEntities(match[3].trim());
-    events.push({ tournamentGuid, drawId, name: eventName });
-  }
-
-  // Also try alternate format without &amp;
-  const drawRegex2 = /href="[^"]*draws\.aspx\?id=([A-F0-9-]+)&draw=(\d+)"[^>]*>([^<]+)/gi;
-  while ((match = drawRegex2.exec(html)) !== null) {
-    const tournamentGuid = match[1];
+    const guid = match[1];
     const drawId = match[2];
     const eventName = decodeHTMLEntities(match[3].trim());
     if (!events.find(e => e.drawId === drawId)) {
-      events.push({ tournamentGuid, drawId, name: eventName });
+      events.push({ tournamentGuid: guid || tournamentGuid, drawId, name: eventName });
     }
   }
 
-  // Extract tournament metadata
   const meta = {};
   const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
   if (titleMatch) meta.title = decodeHTMLEntities(titleMatch[1].trim());
-
-  // Look for dates, venue, surface in common locations
-  const venueMatch = html.match(/Venue[^:]*:\s*([^<]+)/i);
-  if (venueMatch) meta.venue = decodeHTMLEntities(venueMatch[1].trim());
-
-  const dateMatch = html.match(/(\d{1,2}\s+\w+\s+\d{4}\s*[-–]\s*\d{1,2}\s+\w+\s+\d{4})/i);
-  if (dateMatch) meta.dates = dateMatch[1].trim();
 
   return { events, meta };
 }
 
 /**
- * Parse a draw page to extract matches with players, seeds, and scores.
- * TournamentSoftware renders draws as HTML tables where:
- * - Player names are in <a href="player.aspx?..."> tags
- * - Seeds appear as [1] or (1) after/before player names
- * - Scores appear in cells near player names when match is completed
- * - Winners are often bold or have a specific CSS class
+ * Parse the AJAX draw content returned by:
+ *   GET /tournament/{GUID}/Draw/{drawId}/GetMatchesContent?tabindex=1
+ *
+ * Each match is a <li class="match-group__item" id="match_{N}"> block containing:
+ * - Round name in <span title="ROUND NAME" class="nav-link">
+ * - Two <div class="match__row [has-won]"> blocks (winner has "has-won")
+ * - Player name in <span class="nav-link__value">NAME</span> inside a player link or span
+ * - Score in <div class="match__result"> as <ul class="points"> blocks per set
  */
 function parseDrawPage(html) {
   const matches = [];
 
-  // Strategy: Find all player links and group them in pairs to form matches.
-  // Player links: player.aspx?id=GUID&player=PLAYER_ID
-  const playerRegex = /<a[^>]*href="[^"]*player\.aspx[^"]*"[^>]*>([^<]+)<\/a>/gi;
-  const players = [];
-  let pmatch;
-  while ((pmatch = playerRegex.exec(html)) !== null) {
-    const name = decodeHTMLEntities(pmatch[1].trim());
-    if (name && name !== 'Bye' && name.length > 1) {
-      players.push({ name, index: pmatch.index });
-    }
-  }
+  // Split on match blocks
+  const blocks = html.split('<li class="match-group__item"').slice(1);
 
-  // Extract seed info — seeds appear as [N] or (N) near player names
-  const seedRegex = /[\[(](\d{1,2})[\])]\s*/g;
-  const seeds = [];
-  let smatch;
-  while ((smatch = seedRegex.exec(html)) !== null) {
-    seeds.push({ seed: parseInt(smatch[1]), index: smatch.index });
-  }
+  for (const block of blocks) {
+    // TI match ID
+    const idM = block.match(/id="match_(\d+)"/);
+    const tiMatchId = idM ? idM[1] : null;
 
-  // Extract score cells — scores look like "6-4" or "6-4 6-3" or "6-4 3-6 7-5"
-  const scoreRegex = /(\d-\d(?:\s+\d-\d){0,2})/g;
-  const scoreMatches = [];
-  let scmatch;
-  while ((scmatch = scoreRegex.exec(html)) !== null) {
-    scoreMatches.push({ score: scmatch[1], index: scmatch.index });
-  }
+    // Round name from title attribute on the nav-link span
+    const roundM = block.match(/title="([^"]+)"\s+class="nav-link"/);
+    const roundName = roundM ? decodeHTMLEntities(roundM[1].trim()) : 'Final';
 
-  // Pair players into matches (every 2 consecutive players = 1 match)
-  for (let i = 0; i < players.length - 1; i += 2) {
-    const p1 = players[i];
-    const p2 = players[i + 1];
+    // Split into the two player rows
+    const rowParts = block.split('class="match__row');
+    const rows = rowParts.slice(1, 3); // first two rows = player 1 and player 2
 
-    // Find closest seed to each player
-    const p1Seed = findClosestSeed(seeds, p1.index, 100);
-    const p2Seed = findClosestSeed(seeds, p2.index, 100);
+    const players = rows.map(row => {
+      const isWinner = row.startsWith(' has-won');
+      // Player name is always in nav-link__value span
+      const nameM = row.match(/nav-link__value">([^<]+)<\/span>/);
+      const name = nameM ? decodeHTMLEntities(nameM[1].trim()) : 'TBD';
+      return { name, isWinner };
+    });
 
-    // Find score between these two players
-    const matchScore = findClosestScore(scoreMatches, p1.index, p2.index);
+    if (players.length < 2) continue;
+    if (players[0].name === 'Bye' && players[1].name === 'Bye') continue;
 
-    const matchData = {
-      player1_name: cleanPlayerName(p1.name),
-      player1_seed: p1Seed,
-      player2_name: cleanPlayerName(p2.name),
-      player2_seed: p2Seed,
-      score: matchScore?.score || null,
-      status: matchScore ? 'completed' : 'upcoming',
-    };
-
-    // Determine winner from score (player with more sets won)
-    if (matchScore) {
-      matchData.winner_name = determineWinner(matchData, matchScore.score);
-      matchData.sets_played = matchScore.score.split(/\s+/).length;
+    // Score: each set is a <ul class="points"> with two <li class="points__cell"> values
+    const resultM = block.match(/class="match__result">([\s\S]*?)(?:<div class="match__btn"|<\/div>\s*<\/div>\s*<\/li>)/);
+    let score = null;
+    let sets_played = null;
+    if (resultM) {
+      const setBlocks = [...resultM[1].matchAll(/<ul class="points">([\s\S]*?)<\/ul>/g)];
+      const setScores = setBlocks.map(s => {
+        const cells = [...s[1].matchAll(/points__cell[^>]*>\s*(\d+)/g)].map(c => c[1]);
+        return cells.length >= 2 ? `${cells[0]}-${cells[1]}` : null;
+      }).filter(Boolean);
+      if (setScores.length > 0) {
+        score = setScores.join(' ');
+        sets_played = setScores.length;
+      }
     }
 
-    matches.push(matchData);
+    const winner = players[0].isWinner ? players[0].name
+      : players[1].isWinner ? players[1].name
+      : null;
+
+    matches.push({
+      tiMatchId,
+      roundName,
+      player1_name: players[0].name,
+      player2_name: players[1].name,
+      winner_name: winner,
+      score,
+      sets_played,
+      status: winner ? 'completed' : 'upcoming',
+    });
   }
 
   return matches;
@@ -403,112 +391,101 @@ function decodeHTMLEntities(text) {
 async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   console.log(`🎾 Scraping draws for tournament ${tournamentGuid}...`);
 
-  // 1. Fetch tournament page to discover events/draws
-  const tournamentUrl = `${BASE_URL}/tournament/${tournamentGuid}`;
-  let tournamentHtml;
+  // 1. Fetch the draws landing page — this lists all individual draw events
+  //    URL: /sport/draws.aspx?id=GUID  (no draw= param)
+  //    Contains links: draw.aspx?id=GUID&draw=N with event names as text
+  const drawsLandingUrl = `${BASE_URL}/sport/draws.aspx?id=${tournamentGuid}`;
+  let landingHtml;
   try {
-    tournamentHtml = await fetchPage(tournamentUrl);
+    landingHtml = await fetchPage(drawsLandingUrl);
   } catch (err) {
-    console.error(`   ❌ Failed to fetch tournament page: ${err.message}`);
+    console.error(`   ❌ Failed to fetch draws landing page: ${err.message}`);
     return { events: 0, rounds: 0, matches: 0 };
   }
   await delay(REQUEST_DELAY_MS);
 
-  let { events } = parseTournamentPage(tournamentHtml);
-  console.log(`   Found ${events.length} events: ${events.map(e => e.name).join(', ')}`);
-
-  // Fallback: if tournament page returned no draw links (may use JS tabs),
-  // probe draw IDs 1-10 directly to discover which draws exist.
-  if (events.length === 0) {
-    console.log('   No events from tournament page — probing draw IDs 1-10...');
-    for (let drawId = 1; drawId <= 10; drawId++) {
-      const probeUrl = `${BASE_URL}/sport/draws.aspx?id=${tournamentGuid}&draw=${drawId}`;
-      try {
-        const probeHtml = await fetchPage(probeUrl);
-        await delay(REQUEST_DELAY_MS);
-        const probeMatches = parseDrawPage(probeHtml);
-        if (probeMatches.length > 0) {
-          // Extract event name from page title or use generic name
-          const titleM = probeHtml.match(/<title>([^<|–-]{3,60})/i);
-          const probeName = titleM ? decodeHTMLEntities(titleM[1].trim()) : `Draw ${drawId}`;
-          events.push({ tournamentGuid, drawId: String(drawId), name: probeName });
-          console.log(`   Found draw ${drawId}: ${probeName} (${probeMatches.length} matches)`);
-        }
-      } catch (_e) {
-        // 404 or empty draw — stop probing
-        break;
-      }
-    }
-  }
+  const { events } = parseTournamentPage(landingHtml, tournamentGuid);
+  console.log(`   Found ${events.length} draws: ${events.map(e => e.name).join(', ')}`);
 
   const db = getDb();
   const results = { events: 0, rounds: 0, matches: 0 };
 
-  // 2. For each event, fetch the draw page
+  // 2. For each event, fetch AJAX draw content and import
   for (const event of events) {
     const eventCode = inferEventCode(event.name);
-    const eventId = `${tournamentId}-${eventCode}`.toLowerCase();
+    // Use drawId in eventId to handle multiple draws with same code (e.g. two MS events)
+    const eventId = `${tournamentId}-${eventCode}-${event.drawId}`.toLowerCase();
 
-    // Insert/update event
     db.prepare(`
       INSERT OR REPLACE INTO events (id, tournament_id, code, name, draw_size)
       VALUES (?, ?, ?, ?, ?)
     `).run(eventId, tournamentId, eventCode, event.name, 8);
     results.events++;
 
-    // Fetch draw page
-    const drawUrl = `${BASE_URL}/sport/draws.aspx?id=${event.tournamentGuid}&draw=${event.drawId}`;
-    console.log(`   Fetching ${eventCode} draw...`);
+    // Fetch AJAX draw content (the actual bracket/results)
+    const ajaxUrl = `${BASE_URL}/tournament/${event.tournamentGuid}/Draw/${event.drawId}/GetMatchesContent?tabindex=1`;
+    console.log(`   Fetching ${event.name} (draw ${event.drawId})...`);
 
     try {
-      const drawHtml = await fetchPage(drawUrl);
+      const drawHtml = await fetchPage(ajaxUrl);
       await delay(REQUEST_DELAY_MS);
 
       const matches = parseDrawPage(drawHtml);
-      console.log(`   Parsed ${matches.length} matches from ${eventCode}`);
+      console.log(`   Parsed ${matches.length} matches`);
 
-      if (matches.length > 0) {
-        // Determine rounds from match count
-        const rounds = inferRounds(matches.length);
+      if (matches.length === 0) continue;
 
-        let matchIdx = 0;
-        for (let r = 0; r < rounds.length; r++) {
-          const roundId = `${eventId}-r${r + 1}`;
-          const roundMatchCount = rounds[r].matchCount;
+      // Group matches by round name (TI tells us exactly which round each match is in)
+      const roundOrder = [];
+      const byRound = {};
+      for (const match of matches) {
+        if (!byRound[match.roundName]) {
+          roundOrder.push(match.roundName);
+          byRound[match.roundName] = [];
+        }
+        byRound[match.roundName].push(match);
+      }
 
-          // Calculate deadline (day before round starts, roughly)
-          const deadline = new Date();
-          deadline.setDate(deadline.getDate() + r * 2);
-          deadline.setHours(23, 59, 0, 0);
+      // Upsert rounds and matches
+      for (let r = 0; r < roundOrder.length; r++) {
+        const roundName = roundOrder[r];
+        const slug = roundName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const roundId = `${eventId}-${slug}`;
+        const roundMatches = byRound[roundName];
+
+        const deadline = new Date();
+        deadline.setDate(deadline.getDate() + r * 2);
+        deadline.setHours(23, 59, 0, 0);
+
+        db.prepare(`
+          INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(roundId, eventId, roundName, r + 1, deadline.toISOString());
+        results.rounds++;
+
+        for (let m = 0; m < roundMatches.length; m++) {
+          const match = roundMatches[m];
+          // Use TI's own match ID if available, otherwise fall back to position
+          const matchId = match.tiMatchId
+            ? `${eventId}-ti${match.tiMatchId}`
+            : `${roundId}-m${m + 1}`;
 
           db.prepare(`
-            INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(roundId, eventId, rounds[r].name, r + 1, deadline.toISOString());
-          results.rounds++;
-
-          // Upsert matches for this round — deterministic ID so re-scraping updates scores
-          for (let m = 0; m < roundMatchCount && matchIdx < matches.length; m++) {
-            const match = matches[matchIdx++];
-            const matchId = `${roundId}-m${m + 1}`;
-
-            db.prepare(`
-              INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              matchId, roundId,
-              match.player1_name, match.player1_seed,
-              match.player2_name, match.player2_seed,
-              match.status, match.winner_name || null,
-              match.score || null, match.sets_played || null,
-              m + 1
-            );
-            results.matches++;
-          }
+            INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            matchId, roundId,
+            match.player1_name, null,
+            match.player2_name, null,
+            match.status, match.winner_name || null,
+            match.score || null, match.sets_played || null,
+            m + 1
+          );
+          results.matches++;
         }
       }
     } catch (err) {
-      console.error(`   ❌ Error fetching ${eventCode}: ${err.message}`);
+      console.error(`   ❌ Error fetching draw ${event.drawId}: ${err.message}`);
     }
   }
 
