@@ -17,6 +17,7 @@ export default function TournamentDetail() {
   const [activeEvent, setActiveEvent] = useState(0);
   const [activeRound, setActiveRound] = useState(0);
   const [viewMode, setViewMode] = useState('list');
+  const [drawPickerOpen, setDrawPickerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Re-fetch whenever we navigate to this page (location.key changes on every navigation)
@@ -88,21 +89,68 @@ export default function TournamentDetail() {
         </div>
       )}
 
-      {/* Event tabs */}
+      {/* Draw picker — tap to open sheet showing all draws */}
       {events.length > 1 && (
-        <div style={{ display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto' }}>
-          {events.map((e, i) => (
-            <button key={e.id} onClick={() => { setActiveEvent(i); setActiveRound(0); }} style={{
-              padding: '7px 14px', borderRadius: 10,
-              border: `1px solid ${activeEvent === i ? 'var(--accent)' : 'var(--border)'}`,
-              background: activeEvent === i ? 'var(--accent-glow)' : 'transparent',
-              color: activeEvent === i ? 'var(--accent)' : 'var(--text-muted)',
-              fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>
-              {e.code}
-            </button>
-          ))}
-        </div>
+        <>
+          <button
+            onClick={() => setDrawPickerOpen(true)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              width: '100%', padding: '10px 14px', borderRadius: 12, marginBottom: 12,
+              border: '1px solid var(--accent)', background: 'var(--accent-glow)',
+              color: 'var(--accent)', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <span>🎾 {currentEvent?.code || currentEvent?.name || 'Select Draw'}</span>
+            <span style={{ fontSize: 10, opacity: 0.7 }}>{activeEvent + 1} / {events.length} ▾</span>
+          </button>
+
+          {/* Full-screen draw picker sheet */}
+          {drawPickerOpen && (
+            <div
+              onClick={() => setDrawPickerOpen(false)}
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+                zIndex: 1000, display: 'flex', alignItems: 'flex-end',
+              }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  background: 'var(--card)', borderRadius: '20px 20px 0 0',
+                  padding: '8px 0 32px', width: '100%',
+                  maxHeight: '75vh', overflowY: 'auto',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {/* Handle bar */}
+                <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border)', margin: '8px auto 16px' }} />
+                <div style={{ padding: '0 16px 12px', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Select Draw
+                </div>
+                {events.map((e, i) => (
+                  <button
+                    key={e.id}
+                    onClick={() => { setActiveEvent(i); setActiveRound(0); setDrawPickerOpen(false); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      width: '100%', padding: '14px 16px',
+                      background: i === activeEvent ? 'var(--accent-glow)' : 'transparent',
+                      border: 'none', borderBottom: '1px solid var(--border)',
+                      color: i === activeEvent ? 'var(--accent)' : 'var(--text)',
+                      fontSize: 14, fontWeight: i === activeEvent ? 600 : 400,
+                      cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    <span>{e.code || e.name}</span>
+                    {i === activeEvent && <span style={{ fontSize: 16 }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Round tabs */}
