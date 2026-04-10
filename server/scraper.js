@@ -276,12 +276,14 @@ function parseDrawPage(html) {
     const roundM = block.match(/title="([^"]+)"\s+class="nav-link"/);
     const roundName = roundM ? decodeHTMLEntities(roundM[1].trim()) : 'Final';
 
-    // Split into the two player rows
-    const rowParts = block.split('class="match__row');
+    // Split on 'class="match__row ' (with trailing space) — this matches only the
+    // two player rows ("match__row has-won" and "match__row ") and NOT the
+    // sibling divs match__row-wrapper / match__row-title which use a hyphen.
+    const rowParts = block.split('class="match__row ');
     const rows = rowParts.slice(1, 3); // first two rows = player 1 and player 2
 
     const players = rows.map(row => {
-      const isWinner = row.startsWith(' has-won');
+      const isWinner = row.startsWith('has-won');
       // Player name is always in nav-link__value span
       const nameM = row.match(/nav-link__value">([^<]+)<\/span>/);
       const name = nameM ? decodeHTMLEntities(nameM[1].trim()) : 'TBD';
@@ -410,6 +412,24 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
 
   const db = getDb();
   const results = { events: 0, rounds: 0, matches: 0 };
+
+  // Extract dates and club from landing page and update tournament record if still TBC
+  const existing = db.prepare('SELECT dates, club FROM tournaments WHERE id = ?').get(tournamentId);
+  if (existing && (existing.dates === 'TBC' || existing.club === 'TBC')) {
+    // Dates: look for patterns like "7 April 2026 - 10 April 2026" or "07/04/2026"
+    const dateM = landingHtml.match(/(\d{1,2}\s+\w+\s+\d{4})\s*[-–]\s*(\d{1,2}\s+\w+\s+\d{4})/i)
+      || landingHtml.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})/);
+    // Club/venue: look for nav-link__value near location icon
+    const clubM = landingHtml.match(/icon-marker[\s\S]{1,200}?nav-link__value[^>]*>\s*([^<|]+?)\s*\|/);
+    const updates = {};
+    if (dateM && existing.dates === 'TBC') updates.dates = `${dateM[1]} – ${dateM[2]}`;
+    if (clubM && existing.club === 'TBC') updates.club = clubM[1].trim();
+    if (Object.keys(updates).length > 0) {
+      const sets = Object.entries(updates).map(([k]) => `${k} = ?`).join(', ');
+      db.prepare(`UPDATE tournaments SET ${sets} WHERE id = ?`).run(...Object.values(updates), tournamentId);
+      console.log(`   📅 Updated tournament metadata:`, updates);
+    }
+  }
 
   // 2. For each event, fetch AJAX draw content and import
   for (const event of events) {
