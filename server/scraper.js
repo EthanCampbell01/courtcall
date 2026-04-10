@@ -26,7 +26,7 @@ const REQUEST_DELAY_MS = 2000; // 2 seconds between requests — be polite
 const GDPR_COOKIE = 'st=l=1033&exp=99999&c=1'; // Consent cookie
 
 // ─── HTTP Helper ──────────────────────────────────────────────────────
-function fetchPage(url) {
+function fetchPage(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -40,6 +40,7 @@ function fetchPage(url) {
         'Cookie': GDPR_COOKIE,
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'en-GB,en;q=0.9',
+        ...extraHeaders,
       },
     };
 
@@ -49,7 +50,7 @@ function fetchPage(url) {
         const redirectUrl = res.headers.location.startsWith('http')
           ? res.headers.location
           : `${parsedUrl.protocol}//${parsedUrl.hostname}${res.headers.location}`;
-        return resolve(fetchPage(redirectUrl));
+        return resolve(fetchPage(redirectUrl, extraHeaders));
       }
 
       let data = '';
@@ -427,7 +428,7 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
     console.log(`   Fetching ${event.name} (draw ${event.drawId})...`);
 
     try {
-      const drawHtml = await fetchPage(ajaxUrl);
+      const drawHtml = await fetchPage(ajaxUrl, { 'X-Requested-With': 'XMLHttpRequest' });
       await delay(REQUEST_DELAY_MS);
 
       const matches = parseDrawPage(drawHtml);

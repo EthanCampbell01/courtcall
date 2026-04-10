@@ -958,8 +958,8 @@ app.post('/api/admin/discover', adminAuth, async (req, res) => {
   }
 });
 
-// Approve a discovery — creates the tournament and auto-links it
-app.post('/api/admin/discovered/:id/approve', adminAuth, (req, res) => {
+// Approve a discovery — creates the tournament, links it, and kicks off a draw scrape
+app.post('/api/admin/discovered/:id/approve', adminAuth, async (req, res) => {
   const db = getDb();
   const { circuit_id, surface, province } = req.body;
 
@@ -973,6 +973,15 @@ app.post('/api/admin/discovered/:id/approve', adminAuth, (req, res) => {
   `).run(tournId, disc.name, 'TBC', province || 'Ulster', 'TBC', surface || 'Hard', disc.ti_url, circuit_id || null);
 
   db.prepare("UPDATE discovered_tournaments SET status = 'approved' WHERE id = ?").run(disc.id);
+
+  // Kick off draw scrape in background (don't await — respond immediately)
+  const guidMatch = disc.ti_url && disc.ti_url.match(/([A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12})/i);
+  if (guidMatch) {
+    const { scrapeTournamentDraws } = require('./scraper');
+    scrapeTournamentDraws(guidMatch[1], tournId).catch(err =>
+      console.error(`Auto-scrape after approve failed for ${disc.name}: ${err.message}`)
+    );
+  }
 
   res.json({ success: true, tournament_id: tournId });
 });
