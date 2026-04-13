@@ -53,6 +53,31 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN suggested_circuit_id TEXT'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN start_date TEXT'); } catch (e) { /* already exists */ }
 
+    // ─── Make prediction_deadline nullable (was NOT NULL in original schema) ─
+    try {
+      const roundCols = db.prepare("PRAGMA table_info(rounds)").all();
+      const deadlineCol = roundCols.find(c => c.name === 'prediction_deadline');
+      if (deadlineCol && deadlineCol.notnull === 1) {
+        db.exec(`
+          BEGIN;
+          CREATE TABLE rounds_new (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES events(id),
+            name TEXT NOT NULL,
+            round_order INTEGER NOT NULL,
+            prediction_deadline DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT INTO rounds_new SELECT id, event_id, name, round_order, prediction_deadline, created_at FROM rounds;
+          DROP TABLE rounds;
+          ALTER TABLE rounds_new RENAME TO rounds;
+          CREATE INDEX IF NOT EXISTS idx_rounds_event ON rounds(event_id);
+          COMMIT;
+        `);
+        console.log('✅ Migrated rounds.prediction_deadline to nullable');
+      }
+    } catch (e) { console.error('rounds migration failed:', e.message); }
+
     // ─── Remove fake seed tournaments ────────────────────────────────
     try {
       const fakeTournamentIds = [

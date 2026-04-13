@@ -473,6 +473,8 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   for (const ev of oldEvents) {
     const oldRounds = db.prepare('SELECT id FROM rounds WHERE event_id = ?').all(ev.id);
     for (const rd of oldRounds) {
+      // Delete predictions first (no CASCADE defined) then matches
+      db.prepare('DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE round_id = ?)').run(rd.id);
       db.prepare('DELETE FROM matches WHERE round_id = ?').run(rd.id);
     }
     db.prepare('DELETE FROM rounds WHERE event_id = ?').run(ev.id);
