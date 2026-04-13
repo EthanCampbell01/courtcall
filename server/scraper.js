@@ -138,12 +138,16 @@ function parseTournamentList(html) {
     const name = decodeHTMLEntities(match[2].trim());
     if (!name || tournaments.find(t => t.guid === guid)) continue;
 
-    // Extract location from the next ~800 chars (icon-marker → nav-link__value)
+    // Extract location and date from the next ~800 chars
     const following = html.slice(match.index, match.index + 800);
     const locMatch = following.match(/icon-marker[\s\S]{1,300}?nav-link__value[^>]*>\s*([^<]+?)\s*<\/span>/);
     const location = locMatch ? decodeHTMLEntities(locMatch[1].trim()) : null;
 
-    tournaments.push({ guid, name, location });
+    // Dates appear as M/D/YYYY or M/D/YYYY - M/D/YYYY
+    const dateMatch = following.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+    const start_date = dateMatch ? dateMatch[1] : null;
+
+    tournaments.push({ guid, name, location, start_date });
   }
 
   // Fallback: /tournament/{GUID} pattern used on some older TI pages
@@ -683,11 +687,12 @@ async function discoverNewTournaments(searchUrl) {
   });
 
   const upsert = db.prepare(`
-    INSERT INTO discovered_tournaments (id, guid, name, ti_url, location, suggested_circuit_id)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO discovered_tournaments (id, guid, name, ti_url, location, suggested_circuit_id, start_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(guid) DO UPDATE SET
       location = excluded.location,
-      suggested_circuit_id = excluded.suggested_circuit_id
+      suggested_circuit_id = excluded.suggested_circuit_id,
+      start_date = excluded.start_date
     WHERE status = 'pending'
   `);
 
@@ -706,7 +711,7 @@ async function discoverNewTournaments(searchUrl) {
     const isNew = !existing;
     upsert.run(nanoid(12), t.guid, t.name,
       `https://ti.tournamentsoftware.com/tournament/${t.guid}`,
-      t.location || null, suggestedCircuit);
+      t.location || null, suggestedCircuit, t.start_date || null);
     if (isNew) newCount++;
   }
 

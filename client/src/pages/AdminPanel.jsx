@@ -745,12 +745,20 @@ function DiscoveryGroups({ discovered, search, circuits, onApprove, onDismiss })
     </div>;
   }
 
-  // Group by suggested_circuit_id
+  // Group by suggested_circuit_id, sorted by start_date within each group
+  const parseDiscDate = (d) => {
+    if (!d.start_date) return Infinity;
+    const dt = new Date(d.start_date);
+    return isNaN(dt) ? Infinity : dt.getTime();
+  };
   const groups = {};
   for (const d of filtered) {
     const key = d.suggested_circuit_id || '__none__';
     if (!groups[key]) groups[key] = [];
     groups[key].push(d);
+  }
+  for (const key of Object.keys(groups)) {
+    groups[key].sort((a, b) => parseDiscDate(a) - parseDiscDate(b));
   }
 
   // Ordered: known circuits first, then unassigned

@@ -51,6 +51,7 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     )`);
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN location TEXT'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN suggested_circuit_id TEXT'); } catch (e) { /* already exists */ }
+    try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN start_date TEXT'); } catch (e) { /* already exists */ }
 
     // ─── Remove fake seed tournaments ────────────────────────────────
     try {
@@ -931,7 +932,7 @@ app.get('/api/admin/discovered', adminAuth, (_req, res) => {
   const db = getDb();
   const { inferCircuitFromLocation } = require('./scraper');
   const items = db.prepare(
-    "SELECT * FROM discovered_tournaments WHERE status = 'pending' ORDER BY discovered_at DESC"
+    "SELECT * FROM discovered_tournaments WHERE status = 'pending' ORDER BY start_date ASC NULLS LAST, discovered_at DESC"
   ).all();
   // Backfill suggested_circuit_id on-the-fly for rows stored before location extraction was added
   const enriched = items.map(item => {
