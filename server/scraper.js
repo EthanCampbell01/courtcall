@@ -468,25 +468,27 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
     return results;
   }
 
-  // We have good data — now safe to wipe stale records and re-import
-  const oldEvents = db.prepare('SELECT id FROM events WHERE tournament_id = ?').all(tournamentId);
-  for (const ev of oldEvents) {
-    const oldRounds = db.prepare('SELECT id FROM rounds WHERE event_id = ?').all(ev.id);
-    for (const rd of oldRounds) {
-      // Delete predictions first (no CASCADE defined) then matches
-      db.prepare('DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE round_id = ?)').run(rd.id);
-      db.prepare('DELETE FROM matches WHERE round_id = ?').run(rd.id);
-    }
-    db.prepare('DELETE FROM rounds WHERE event_id = ?').run(ev.id);
+  // We have good data — now safe to wipe stale records and re-import.
+  // Disable FK checks for the duration: we're doing a full controlled replacement
+  // and intermediate states (e.g. orphaned rounds from old ID schemes) would
+  // otherwise cause spurious FK errors.
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.prepare('DELETE FROM predictions WHERE match_id IN (SELECT m.id FROM matches m JOIN rounds r ON m.round_id = r.id JOIN events e ON r.event_id = e.id WHERE e.tournament_id = ?)').run(tournamentId);
+    db.prepare('DELETE FROM matches WHERE round_id IN (SELECT r.id FROM rounds r JOIN events e ON r.event_id = e.id WHERE e.tournament_id = ?)').run(tournamentId);
+    db.prepare('DELETE FROM rounds WHERE event_id IN (SELECT id FROM events WHERE tournament_id = ?)').run(tournamentId);
+    db.prepare('DELETE FROM events WHERE tournament_id = ?').run(tournamentId);
+    console.log(`   🧹 Cleared stale data for tournament ${tournamentId}`);
+  } finally {
+    db.pragma('foreign_keys = ON');
   }
-  db.prepare('DELETE FROM events WHERE tournament_id = ?').run(tournamentId);
-  console.log(`   🧹 Cleared ${oldEvents.length} stale event(s)`);
 
   for (const { event, eventId, matches } of fetchedEvents) {
     db.prepare(`
-      INSERT OR REPLACE INTO events (id, tournament_id, code, name, draw_size)
+      INSERT OR IGNORE INTO events (id, tournament_id, code, name, draw_size)
       VALUES (?, ?, ?, ?, ?)
     `).run(eventId, tournamentId, event.name, event.name, 8);
+    db.prepare(`UPDATE events SET code = ?, name = ? WHERE id = ?`).run(event.name, event.name, eventId);
     results.events++;
 
     if (matches.length === 0) continue;
@@ -521,7 +523,7 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
           : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
 
         db.prepare(`
-          INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
+          INSERT OR IGNORE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           matchId, roundId,
