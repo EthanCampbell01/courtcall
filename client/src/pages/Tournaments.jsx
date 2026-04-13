@@ -38,8 +38,18 @@ export default function Tournaments() {
     return diff > 0 && diff < 24 * 60 * 60 * 1000;
   });
 
-  const upcoming = tournaments.filter(t => t.status === 'upcoming' || t.status === 'active');
-  const completed = tournaments.filter(t => t.status === 'completed');
+  const parseStartDate = (t) => {
+    const raw = (t.dates || '').split(/[–—-]/)[0].trim();
+    const d = new Date(raw);
+    return isNaN(d) ? Infinity : d.getTime();
+  };
+
+  const upcoming = tournaments
+    .filter(t => t.status === 'upcoming' || t.status === 'active')
+    .sort((a, b) => parseStartDate(a) - parseStartDate(b));
+  const completed = tournaments
+    .filter(t => t.status === 'completed')
+    .sort((a, b) => parseStartDate(b) - parseStartDate(a));
 
   return (
     <div>
