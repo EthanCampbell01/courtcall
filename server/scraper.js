@@ -441,9 +441,34 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
     }
   }
 
-  // Clear ALL stale events/rounds/matches for this tournament before re-importing.
-  // Previous scrapes may have used different ID schemes, leaving orphaned TBD data.
-  // We do this AFTER updating metadata (above) but BEFORE inserting fresh data.
+  // 2. Fetch all draw data into memory first — only wipe DB if we get actual matches
+  const fetchedEvents = [];
+  for (const event of events) {
+    const eventCode = inferEventCode(event.name);
+    const eventId = `${tournamentId}-${eventCode}-${event.drawId}`.toLowerCase();
+    const ajaxUrl = `${BASE_URL}/tournament/${event.tournamentGuid}/Draw/${event.drawId}/GetMatchesContent?tabindex=1`;
+    console.log(`   Fetching ${event.name} (draw ${event.drawId})...`);
+
+    try {
+      const drawHtml = await fetchPage(ajaxUrl, { 'X-Requested-With': 'XMLHttpRequest' });
+      await delay(REQUEST_DELAY_MS);
+
+      const matches = parseDrawPage(drawHtml);
+      console.log(`   Parsed ${matches.length} matches`);
+
+      fetchedEvents.push({ event, eventId, matches });
+    } catch (err) {
+      console.error(`   ❌ Error fetching draw ${event.drawId}: ${err.message}`);
+    }
+  }
+
+  const totalMatchesFetched = fetchedEvents.reduce((sum, e) => sum + e.matches.length, 0);
+  if (totalMatchesFetched === 0) {
+    console.log(`   ⚠️  No matches fetched — preserving existing data`);
+    return results;
+  }
+
+  // We have good data — now safe to wipe stale records and re-import
   const oldEvents = db.prepare('SELECT id FROM events WHERE tournament_id = ?').all(tournamentId);
   for (const ev of oldEvents) {
     const oldRounds = db.prepare('SELECT id FROM rounds WHERE event_id = ?').all(ev.id);
@@ -455,81 +480,57 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   db.prepare('DELETE FROM events WHERE tournament_id = ?').run(tournamentId);
   console.log(`   🧹 Cleared ${oldEvents.length} stale event(s)`);
 
-  // 2. For each event, fetch AJAX draw content and import
-  for (const event of events) {
-    const eventCode = inferEventCode(event.name);
-    // Use drawId in eventId to handle multiple draws with same code (e.g. two MS events)
-    const eventId = `${tournamentId}-${eventCode}-${event.drawId}`.toLowerCase();
-
-    // Use the full draw name as the display code so tabs are readable
-    // (e.g. "Boys U/14 Plate", "BOX A", "Men's Singles")
+  for (const { event, eventId, matches } of fetchedEvents) {
     db.prepare(`
       INSERT OR REPLACE INTO events (id, tournament_id, code, name, draw_size)
       VALUES (?, ?, ?, ?, ?)
     `).run(eventId, tournamentId, event.name, event.name, 8);
     results.events++;
 
-    // Fetch AJAX draw content (the actual bracket/results)
-    const ajaxUrl = `${BASE_URL}/tournament/${event.tournamentGuid}/Draw/${event.drawId}/GetMatchesContent?tabindex=1`;
-    console.log(`   Fetching ${event.name} (draw ${event.drawId})...`);
+    if (matches.length === 0) continue;
 
-    try {
-      const drawHtml = await fetchPage(ajaxUrl, { 'X-Requested-With': 'XMLHttpRequest' });
-      await delay(REQUEST_DELAY_MS);
+    // Group matches by round name, then sort rounds into correct order
+    const byRound = {};
+    for (const match of matches) {
+      if (!byRound[match.roundName]) byRound[match.roundName] = [];
+      byRound[match.roundName].push(match);
+    }
+    const roundOrder = Object.keys(byRound).sort(
+      (a, b) => getRoundSortOrder(a) - getRoundSortOrder(b)
+    );
 
-      const matches = parseDrawPage(drawHtml);
-      console.log(`   Parsed ${matches.length} matches`);
+    for (let r = 0; r < roundOrder.length; r++) {
+      const roundName = roundOrder[r];
+      const slug = roundName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const roundId = `${eventId}-${slug}`;
+      const roundMatches = byRound[roundName];
 
-      if (matches.length === 0) continue;
+      db.prepare(`
+        INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(roundId, eventId, roundName, r + 1, null);
+      results.rounds++;
 
-      // Group matches by round name, then sort rounds into correct order
-      const byRound = {};
-      for (const match of matches) {
-        if (!byRound[match.roundName]) byRound[match.roundName] = [];
-        byRound[match.roundName].push(match);
-      }
-      const roundOrder = Object.keys(byRound).sort(
-        (a, b) => getRoundSortOrder(a) - getRoundSortOrder(b)
-      );
-
-      // Upsert rounds and matches
-      for (let r = 0; r < roundOrder.length; r++) {
-        const roundName = roundOrder[r];
-        const slug = roundName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        const roundId = `${eventId}-${slug}`;
-        const roundMatches = byRound[roundName];
+      for (let m = 0; m < roundMatches.length; m++) {
+        const match = roundMatches[m];
+        const tiIdUsable = match.tiMatchId && match.tiMatchId !== '0';
+        const matchId = tiIdUsable
+          ? `${eventId}-ti${match.tiMatchId}`
+          : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
 
         db.prepare(`
-          INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(roundId, eventId, roundName, r + 1, null);
-        results.rounds++;
-
-        for (let m = 0; m < roundMatches.length; m++) {
-          const match = roundMatches[m];
-          // TI box leagues use id="match_0" for all matches — not unique.
-          // Fall back to player-name-based ID which is stable across re-scrapes.
-          const tiIdUsable = match.tiMatchId && match.tiMatchId !== '0';
-          const matchId = tiIdUsable
-            ? `${eventId}-ti${match.tiMatchId}`
-            : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
-
-          db.prepare(`
-            INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            matchId, roundId,
-            match.player1_name, null,
-            match.player2_name, null,
-            match.status, match.winner_name || null,
-            match.score || null, match.sets_played || null,
-            m + 1
-          );
-          results.matches++;
-        }
+          INSERT OR REPLACE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          matchId, roundId,
+          match.player1_name, null,
+          match.player2_name, null,
+          match.status, match.winner_name || null,
+          match.score || null, match.sets_played || null,
+          m + 1
+        );
+        results.matches++;
       }
-    } catch (err) {
-      console.error(`   ❌ Error fetching draw ${event.drawId}: ${err.message}`);
     }
   }
 
