@@ -810,6 +810,7 @@ function DiscoveryItem({ disc, circuits, onApprove, onDismiss }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{disc.name}</div>
           {disc.location && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>📍 {disc.location}</div>}
+          {disc.start_date && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>📅 {disc.start_date}</div>}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setExpanded(e => !e)} style={{
