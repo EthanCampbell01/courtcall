@@ -47,7 +47,8 @@ export default function TournamentDetail() {
   const currentRound = rounds[activeRound];
   const matches = currentRound?.matches || [];
 
-  const deadlinePassed = currentRound && currentRound.prediction_deadline && new Date() > new Date(currentRound.prediction_deadline);
+  // No deadline set = predictions not yet open (locked); deadline in past = locked
+  const deadlinePassed = !currentRound?.prediction_deadline || new Date() > new Date(currentRound.prediction_deadline);
 
   // Calculate prediction progress across all rounds
   const allMatches = rounds.flatMap(r => r.matches);
@@ -176,7 +177,7 @@ export default function TournamentDetail() {
           )}
           {currentRound && deadlinePassed && (
             <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
-              🔒 Predictions locked for this round
+              {currentRound.prediction_deadline ? '🔒 Predictions locked for this round' : '🔒 Predictions not yet open'}
             </div>
           )}
 

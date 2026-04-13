@@ -499,14 +499,10 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
         const roundId = `${eventId}-${slug}`;
         const roundMatches = byRound[roundName];
 
-        const deadline = new Date();
-        deadline.setDate(deadline.getDate() + r * 2);
-        deadline.setHours(23, 59, 0, 0);
-
         db.prepare(`
           INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
           VALUES (?, ?, ?, ?, ?)
-        `).run(roundId, eventId, roundName, r + 1, deadline.toISOString());
+        `).run(roundId, eventId, roundName, r + 1, null);
         results.rounds++;
 
         for (let m = 0; m < roundMatches.length; m++) {
