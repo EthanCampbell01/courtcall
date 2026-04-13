@@ -656,21 +656,28 @@ async function discoverNewTournaments(searchUrl) {
   const allFound = [];
   for (const { year, month } of monthSlots) {
     console.log(`🔍 Discovering tournaments for ${year}/${month}...`);
-    try {
-      const html = await postForm(SEARCH_ENDPOINT, {
-        'Page': 1,
-        'TournamentExtendedFilter.SportID': 0,
-        'TournamentFilter.DateFilterType': 1,
-        'TournamentFilter.YearNr': year,
-        'TournamentFilter.MonthNr': month,
-        'TournamentFilter.Q': '',
-      });
-      const found = parseTournamentList(html);
-      console.log(`   Found ${found.length} tournaments`);
-      allFound.push(...found);
-      await delay(REQUEST_DELAY_MS);
-    } catch (err) {
-      console.error(`❌ Discovery failed for ${year}/${month}: ${err.message}`);
+    let prevCount = 0;
+    for (let page = 1; page <= 20; page++) {
+      try {
+        const html = await postForm(SEARCH_ENDPOINT, {
+          'Page': page,
+          'TournamentExtendedFilter.SportID': 0,
+          'TournamentFilter.DateFilterType': 1,
+          'TournamentFilter.YearNr': year,
+          'TournamentFilter.MonthNr': month,
+          'TournamentFilter.Q': '',
+        });
+        const found = parseTournamentList(html);
+        console.log(`   Page ${page}: ${found.length} cumulative tournaments`);
+        allFound.push(...found);
+        await delay(REQUEST_DELAY_MS);
+        // TI returns cumulative results — stop when count stops growing
+        if (found.length === prevCount) break;
+        prevCount = found.length;
+      } catch (err) {
+        console.error(`❌ Discovery failed for ${year}/${month} page ${page}: ${err.message}`);
+        break;
+      }
     }
   }
 
