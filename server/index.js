@@ -681,6 +681,15 @@ app.post('/api/admin/matches', adminAuth, (req, res) => {
   res.json({ success: true, count: matches.length });
 });
 
+app.patch('/api/admin/matches/:matchId', adminAuth, (req, res) => {
+  const { scheduled_time } = req.body;
+  const db = getDb();
+  const match = db.prepare('SELECT id FROM matches WHERE id = ?').get(req.params.matchId);
+  if (!match) return res.status(404).json({ error: 'Match not found' });
+  db.prepare('UPDATE matches SET scheduled_time = ? WHERE id = ?').run(scheduled_time || null, req.params.matchId);
+  res.json({ success: true });
+});
+
 // Enter match result and score predictions
 // Supports: normal results, walkovers (w/o), retirements (ret.), and byes
 app.post('/api/admin/results', adminAuth, (req, res) => {

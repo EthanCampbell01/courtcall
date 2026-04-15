@@ -308,12 +308,74 @@ function AddMatches({ tournaments, showToast, selectedTournament, setSelectedTou
           }}>
             Add Matches
           </button>
+
+          <MatchTimePicker roundId={selectedRound} tournamentDetail={tournamentDetail} showToast={showToast} />
         </>
       )}
 
       {selectedTournament && allRounds.length === 0 && (
         <QuickSetup tournamentId={selectedTournament} showToast={showToast} onCreated={onAdded} />
       )}
+    </div>
+  );
+}
+
+MatchTimePicker.propTypes = {
+  roundId: PropTypes.string.isRequired,
+  tournamentDetail: PropTypes.object,
+  showToast: PropTypes.func.isRequired,
+};
+
+function MatchTimePicker({ roundId, tournamentDetail, showToast }) {
+  const [times, setTimes] = useState({});
+  const [saving, setSaving] = useState({});
+
+  const matches = tournamentDetail?.events?.flatMap(ev =>
+    ev.rounds.filter(r => r.id === roundId).flatMap(r => r.matches || [])
+  ) || [];
+
+  if (matches.length === 0) return null;
+
+  const handleSave = async (matchId) => {
+    setSaving(s => ({ ...s, [matchId]: true }));
+    try {
+      await api.setMatchTime(matchId, times[matchId] || null);
+      showToast('Time saved');
+    } catch (err) { showToast('Error: ' + err.message); }
+    setSaving(s => ({ ...s, [matchId]: false }));
+  };
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>
+        Scheduled Times
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {matches.map(m => {
+          const existing = m.scheduled_time ? m.scheduled_time.slice(0, 16) : '';
+          const val = times[m.id] !== undefined ? times[m.id] : existing;
+          return (
+            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', borderRadius: 10, padding: '8px 10px', border: '1px solid var(--border)' }}>
+              <div style={{ flex: 1, fontSize: 12, color: 'var(--text)' }}>
+                {m.player1_name} <span style={{ color: 'var(--text-dim)' }}>vs</span> {m.player2_name}
+              </div>
+              <input
+                type="datetime-local"
+                value={val}
+                onChange={e => setTimes(t => ({ ...t, [m.id]: e.target.value }))}
+                style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text)', fontSize: 11 }}
+              />
+              <button
+                onClick={() => handleSave(m.id)}
+                disabled={saving[m.id]}
+                style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: 'var(--accent)', color: 'var(--bg)', fontSize: 11, fontWeight: 600, opacity: saving[m.id] ? 0.6 : 1 }}
+              >
+                Save
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

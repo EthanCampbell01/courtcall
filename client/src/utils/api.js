@@ -72,6 +72,10 @@ export const api = {
     const user = getStoredUser();
     return request('/admin/results', { method: 'POST', body: JSON.stringify({ ...data, user_id: user?.id }) });
   },
+  setMatchTime: (matchId, scheduled_time) => {
+    const user = getStoredUser();
+    return request(`/admin/matches/${matchId}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time, user_id: user?.id }) });
+  },
 };
 
 function getStoredUser() {
