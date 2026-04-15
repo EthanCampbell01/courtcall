@@ -37,7 +37,7 @@ let browser = null;
 
 async function getBrowser() {
   if (!browser || !browser.isConnected()) {
-    browser = await puppeteer.launch({
+    const launchOpts = {
       headless: CONFIG.headless ? 'new' : false,
       args: [
         '--no-sandbox',
@@ -46,7 +46,12 @@ async function getBrowser() {
         '--disable-gpu',
         '--window-size=1280,900',
       ],
-    });
+    };
+    // Use system Chromium if PUPPETEER_EXECUTABLE_PATH is set (Docker/Railway)
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+    browser = await puppeteer.launch(launchOpts);
   }
   return browser;
 }
@@ -481,6 +486,98 @@ async function runDaemon() {
   }, intervalMs);
 }
 
+// ─── Schedule Time Scraper ───────────────────────────────────────────
+/**
+ * Use Puppeteer to extract scheduled match times from TI's draw page.
+ * TI injects times via JavaScript, so we need a real browser.
+ * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
+ */
+async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
+  const url = `https://ti.tournamentsoftware.com/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`;
+  console.log(`   🌐 Puppeteer fetching schedule times from draw page...`);
+
+  const page = await loadPage(url);
+
+  const times = await page.evaluate(() => {
+    const result = {};
+    const matchBlocks = document.querySelectorAll('li.match-group__item');
+
+    // DEBUG: log first block structure so we can see what JS renders
+    if (matchBlocks.length > 0) {
+      const sample = matchBlocks[0].innerHTML.replace(/\s+/g, ' ').slice(0, 800);
+      console.log('[TI-DEBUG] First rendered match block:', sample);
+    }
+
+    matchBlocks.forEach(block => {
+      // Player names are in match__row divs, each containing a nav-link__value span
+      const rows = block.querySelectorAll('.match__row');
+      const players = [];
+      for (const row of rows) {
+        const span = row.querySelector('.nav-link__value');
+        if (span) {
+          const text = span.textContent.trim();
+          if (text && text !== 'TBD' && text !== 'Bye') players.push(text);
+        }
+        if (players.length === 2) break;
+      }
+      if (players.length < 2 || players[0] === players[1]) return;
+
+      // Scheduled time: TI puts it in the match header as a nav-link__value span
+      // (same span that shows "Not yet planned" when unscheduled)
+      // After JS runs it becomes e.g. "Thu 16/04/2026 19:00"
+      let scheduledTime = null;
+
+      // 1. <time datetime="..."> element anywhere in the block
+      const timeEl = block.querySelector('time[datetime]');
+      if (timeEl) {
+        const dt = timeEl.getAttribute('datetime');
+        if (dt && /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dt)) {
+          scheduledTime = dt.slice(0, 16);
+        }
+      }
+
+      // 2. nav-link__value span in the header containing a date pattern
+      if (!scheduledTime) {
+        const header = block.querySelector('.match__header');
+        if (header) {
+          const spans = header.querySelectorAll('.nav-link__value');
+          for (const span of spans) {
+            const text = span.textContent.trim();
+            const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+            if (m) {
+              scheduledTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
+              break;
+            }
+          }
+        }
+      }
+
+      // 3. Any date/time text anywhere in the block (broadest fallback)
+      if (!scheduledTime) {
+        const text = block.innerText || block.textContent || '';
+        const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+        if (m) {
+          scheduledTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
+        }
+      }
+
+      if (scheduledTime) {
+        result[`${players[0]}|${players[1]}`] = scheduledTime;
+      }
+    });
+
+    return result;
+  });
+
+  // Collect any console.log messages from page.evaluate (they go to page console, not Node)
+  // Instead grab them via page events — already attached in loadPage if needed
+  await page.close();
+
+  const count = Object.keys(times).length;
+  console.log(`   ${count > 0 ? '✅' : '⚠️ '} Puppeteer found ${count} scheduled times`);
+  return times;
+}
+
 // ─── Express Route Integration ──────────────────────────────────────
 function addAutoScraperRoutes(app, adminAuth) {
   const auth = adminAuth || ((_req, _res, next) => next());
@@ -538,5 +635,6 @@ module.exports = {
   scrapeAll,
   runDaemon,
   addAutoScraperRoutes,
+  scrapeDrawScheduleTimes,
   closeBrowser,
 };

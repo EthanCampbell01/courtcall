@@ -417,148 +417,15 @@ function decodeHTMLEntities(text) {
  * Returns a map of "player1|player2" → "YYYY-MM-DDTHH:MM".
  */
 async function fetchScheduleTimes(tournamentGuid, drawId) {
-  // TI injects times via JavaScript — they are not in the AJAX HTML fragments.
-  // Try the full .aspx page (includes embedded JS/JSON data) and a few
-  // other tabindex values that might carry schedule data.
-  const urls = [
-    `${BASE_URL}/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`,
-    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=0`,
-    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=3`,
-    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=4`,
-    `${BASE_URL}/sport/orderofplay.aspx?id=${tournamentGuid}`,
-  ];
-
-  for (const url of urls) {
-    try {
-      const html = await fetchPage(url, { 'X-Requested-With': 'XMLHttpRequest' });
-      await delay(REQUEST_DELAY_MS);
-
-      // First try the block-based schedule parser
-      const times = parseSchedulePage(html);
-      if (Object.keys(times).length > 0) {
-        console.log(`   ✅ Schedule times found at: ${url.replace(BASE_URL, '')}`);
-        return times;
-      }
-
-      // Also try to extract times from embedded JSON/script data in the full page
-      const scriptTimes = parseEmbeddedScheduleJson(html);
-      if (Object.keys(scriptTimes).length > 0) {
-        console.log(`   ✅ Schedule times found (JSON) at: ${url.replace(BASE_URL, '')}`);
-        return scriptTimes;
-      }
-
-      // DEBUG: for the full .aspx page, log a snippet near any time-like content
-      if (url.includes('.aspx')) {
-        const timeIdx = html.search(/\d{2}:\d{2}/);
-        const dateIdx = html.search(/\d{2}\/\d{2}\/\d{4}/);
-        const hit = timeIdx !== -1 ? timeIdx : dateIdx;
-        if (hit !== -1) {
-          console.log(`   🕐 Time data found in ${url.replace(BASE_URL, '')} at char ${hit}: ${html.slice(Math.max(0, hit - 100), hit + 300).replace(/\s+/g, ' ')}`);
-        } else {
-          console.log(`   ⚠️  No date/time patterns in ${url.replace(BASE_URL, '')} (len=${html.length})`);
-        }
-      }
-    } catch (err) {
-      console.log(`   ❌ ${url.replace(BASE_URL, '')} → ${err.message}`);
-    }
+  // TI renders schedule times via JavaScript — they are not present in any
+  // server-rendered HTML. Fall back to Puppeteer (headless Chrome) if available.
+  try {
+    const { scrapeDrawScheduleTimes } = require('./scraper-auto');
+    return await scrapeDrawScheduleTimes(tournamentGuid, drawId);
+  } catch {
+    // Puppeteer not available — times will be blank
+    return {};
   }
-  return {};
-}
-
-/**
- * Look for schedule times embedded as JSON in a full TI page's <script> tags.
- * TI's JavaScript initialises draws with data objects that include scheduled times.
- */
-function parseEmbeddedScheduleJson(html) {
-  const times = {};
-
-  // Pattern: JSON objects containing scheduledDate/scheduledTime/matchTime fields
-  // e.g. {"matchId":123,"scheduledDate":"2026-04-16","scheduledTime":"19:00",...}
-  for (const m of html.matchAll(/"scheduledDate"\s*:\s*"(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?"/g)) {
-    const date = m[1];
-    const time = m[2];
-    if (!time) continue;
-    // Try to find player names nearby (within 800 chars either side)
-    const start = Math.max(0, m.index - 400);
-    const chunk = html.slice(start, m.index + 400);
-    const names = [...chunk.matchAll(/"(?:player1?Name|name)"\s*:\s*"([^"]+)"/g)].map(n => n[1]);
-    if (names.length >= 2) times[`${names[0]}|${names[1]}`] = `${date}T${time}`;
-  }
-
-  // Pattern: ISO datetime strings near player name pairs
-  // e.g. "dateTime":"2026-04-16T19:00:00" or "time":"2026-04-16T19:00"
-  for (const m of html.matchAll(/"(?:dateTime|scheduledDateTime|matchTime)"\s*:\s*"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/g)) {
-    const iso = m[1];
-    const start = Math.max(0, m.index - 400);
-    const chunk = html.slice(start, m.index + 400);
-    const names = [...chunk.matchAll(/"(?:player1?Name|name)"\s*:\s*"([^"]+)"/g)].map(n => n[1]);
-    if (names.length >= 2) times[`${names[0]}|${names[1]}`] = iso;
-  }
-
-  return times;
-}
-
-/**
- * Extract "player1|player2" → "YYYY-MM-DDTHH:MM" from TI's Order of Play HTML.
- * Uses the same block-based approach as parseDrawPage — each match is a
- * <li class="match-group__item"> block, player names are in nav-link__value spans,
- * and the scheduled time appears as a nav-link__value span containing "DD/MM/YYYY HH:MM"
- * (e.g. "Thu 16/04/2026 19:00") or as a datetime= attribute.
- */
-function parseSchedulePage(html) {
-  const times = {};
-  const blocks = html.split('<li class="match-group__item"').slice(1);
-
-  for (const block of blocks) {
-    // Get player names the same way parseDrawPage does
-    const rowParts = block.split('class="match__row ');
-    const rows = rowParts.slice(1, 3);
-    const players = rows.map(row => {
-      const nameM = row.match(/nav-link__value">([^<]+)<\/span>/);
-      return nameM ? decodeHTMLEntities(nameM[1].trim()) : null;
-    }).filter(p => p && p !== 'TBD' && p !== 'Bye');
-
-    if (players.length < 2 || players[0] === players[1]) continue;
-
-    // Strategy 1: datetime= attribute (most reliable when present)
-    const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/);
-    if (isoM) {
-      times[`${players[0]}|${players[1]}`] = isoM[1];
-      continue;
-    }
-
-    // Strategy 2: nav-link__value span containing "Thu 16/04/2026 19:00" style text
-    // TI puts the scheduled time as a nav-link__value in the match header
-    for (const m of block.matchAll(/nav-link__value">([^<]*\d{1,2}\/\d{2}\/\d{4}[^<]*)<\/span>/g)) {
-      const text = m[1].trim();
-      const dateM = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
-      const timeM = text.match(/(\d{2}):(\d{2})(?!\d)/);
-      if (dateM && timeM) {
-        const iso = `${dateM[3]}-${dateM[2]}-${String(dateM[1]).padStart(2, '0')}T${timeM[1]}:${timeM[2]}`;
-        times[`${players[0]}|${players[1]}`] = iso;
-        break;
-      }
-    }
-
-    if (times[`${players[0]}|${players[1]}`]) continue;
-
-    // Strategy 3: any DD/MM/YYYY followed within 80 chars by HH:MM anywhere in the block
-    const slashM = block.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
-    if (slashM) {
-      const after = block.slice(slashM.index, slashM.index + 100);
-      const timeM = after.match(/(\d{2}):(\d{2})(?!\d)/);
-      if (timeM) {
-        times[`${players[0]}|${players[1]}`] = `${slashM[3]}-${slashM[2]}-${String(slashM[1]).padStart(2, '0')}T${timeM[1]}:${timeM[2]}`;
-      }
-    }
-  }
-
-  // DEBUG: log first block when nothing was found so we can see TI's format
-  if (Object.keys(times).length === 0 && blocks.length > 0) {
-    console.log(`   🔍 Schedule block sample: ${blocks[0].replace(/\s+/g, ' ').slice(0, 600)}`);
-  }
-
-  return times;
 }
 
 // ─── High-Level Scraper Functions ─────────────────────────────────────
