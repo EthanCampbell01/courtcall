@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { api } from '../utils/api';
 import BackButton from '../components/BackButton';
+
+AdminPanel.propTypes = {
+  showToast: PropTypes.func.isRequired,
+};
 
 export default function AdminPanel({ showToast }) {
   const [tab, setTab] = useState('matches');
@@ -92,6 +97,41 @@ export default function AdminPanel({ showToast }) {
   );
 }
 
+const tournamentShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  name: PropTypes.string.isRequired,
+  ti_url: PropTypes.string,
+});
+
+const tournamentDetailShape = PropTypes.shape({
+  events: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      code: PropTypes.string,
+      name: PropTypes.string,
+      rounds: PropTypes.arrayOf(
+        PropTypes.shape({
+          id: PropTypes.string.isRequired,
+          name: PropTypes.string.isRequired,
+          matches: PropTypes.arrayOf(
+            PropTypes.shape({
+              id: PropTypes.string.isRequired,
+              player1_name: PropTypes.string,
+              player2_name: PropTypes.string,
+              status: PropTypes.string,
+            })
+          ),
+        })
+      ),
+    })
+  ),
+});
+
+AddTournament.propTypes = {
+  showToast: PropTypes.func.isRequired,
+  onAdded: PropTypes.func.isRequired,
+};
+
 function AddTournament({ showToast, onAdded }) {
   const [name, setName] = useState('');
   const [club, setClub] = useState('');
@@ -141,6 +181,15 @@ function AddTournament({ showToast, onAdded }) {
     </div>
   );
 }
+
+AddMatches.propTypes = {
+  tournaments: PropTypes.arrayOf(tournamentShape).isRequired,
+  showToast: PropTypes.func.isRequired,
+  selectedTournament: PropTypes.string,
+  setSelectedTournament: PropTypes.func.isRequired,
+  tournamentDetail: tournamentDetailShape,
+  onAdded: PropTypes.func.isRequired,
+};
 
 function AddMatches({ tournaments, showToast, selectedTournament, setSelectedTournament, tournamentDetail, onAdded }) {
   const [matchText, setMatchText] = useState('');
@@ -273,6 +322,12 @@ function AddMatches({ tournaments, showToast, selectedTournament, setSelectedTou
  * QuickSetup — creates event + round when admin selects a tournament with no draw.
  * Handles the most common case: single-event tournament (e.g. Men's Singles).
  */
+QuickSetup.propTypes = {
+  tournamentId: PropTypes.string.isRequired,
+  showToast: PropTypes.func.isRequired,
+  onCreated: PropTypes.func,
+};
+
 function QuickSetup({ tournamentId, showToast, onCreated }) {
   const [eventCode, setEventCode] = useState('MS');
   const [eventName, setEventName] = useState("Men's Singles");
@@ -349,6 +404,15 @@ function QuickSetup({ tournamentId, showToast, onCreated }) {
   );
 }
 
+EnterResults.propTypes = {
+  tournaments: PropTypes.arrayOf(tournamentShape).isRequired,
+  showToast: PropTypes.func.isRequired,
+  selectedTournament: PropTypes.string,
+  setSelectedTournament: PropTypes.func.isRequired,
+  tournamentDetail: tournamentDetailShape,
+  onResultSaved: PropTypes.func,
+};
+
 function EnterResults({ tournaments, showToast, selectedTournament, setSelectedTournament, tournamentDetail, onResultSaved }) {
   const [selectedMatch, setSelectedMatch] = useState('');
   const [winnerName, setWinnerName] = useState('');
@@ -380,7 +444,7 @@ function EnterResults({ tournaments, showToast, selectedTournament, setSelectedT
       const result = await api.submitResult({
         match_id: selectedMatch,
         winner_name: winnerName,
-        score: resultType === 'normal' ? (score || null) : (score || null),
+        score: score || null,
         sets_played: resultType === 'normal' ? (parseInt(setsPlayed) || null) : null,
         result_type: resultType,
       });
@@ -490,6 +554,11 @@ function EnterResults({ tournaments, showToast, selectedTournament, setSelectedT
     </div>
   );
 }
+
+ScraperPanel.propTypes = {
+  tournaments: PropTypes.arrayOf(tournamentShape).isRequired,
+  showToast: PropTypes.func.isRequired,
+};
 
 function ScraperPanel({ tournaments, showToast }) {
   const [selectedTournament, setSelectedTournament] = useState('');
@@ -733,6 +802,28 @@ const CIRCUIT_LABELS = {
   'bucs-tennis': { label: 'BUCS', emoji: '🎓' },
 };
 
+const discoveredShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  name: PropTypes.string.isRequired,
+  location: PropTypes.string,
+  start_date: PropTypes.string,
+  suggested_circuit_id: PropTypes.string,
+});
+
+const circuitShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  name: PropTypes.string.isRequired,
+});
+
+DiscoveryGroups.propTypes = {
+  discovered: PropTypes.arrayOf(discoveredShape).isRequired,
+  search: PropTypes.string.isRequired,
+  circuits: PropTypes.arrayOf(circuitShape).isRequired,
+  /** Called with (disc, circuit_id, surface, province) */
+  onApprove: PropTypes.func.isRequired,
+  onDismiss: PropTypes.func.isRequired,
+};
+
 function DiscoveryGroups({ discovered, search, circuits, onApprove, onDismiss }) {
   const q = search.toLowerCase();
   const filtered = discovered.filter(d =>
@@ -784,6 +875,14 @@ function DiscoveryGroups({ discovered, search, circuits, onApprove, onDismiss })
     </>
   );
 }
+
+DiscoveryItem.propTypes = {
+  disc: discoveredShape.isRequired,
+  circuits: PropTypes.arrayOf(circuitShape).isRequired,
+  /** Called with (disc, circuit_id, surface, province) */
+  onApprove: PropTypes.func.isRequired,
+  onDismiss: PropTypes.func.isRequired,
+};
 
 function DiscoveryItem({ disc, circuits, onApprove, onDismiss }) {
   const [expanded, setExpanded] = useState(false);
@@ -863,6 +962,10 @@ function DiscoveryItem({ disc, circuits, onApprove, onDismiss }) {
     </div>
   );
 }
+
+UsersPanel.propTypes = {
+  showToast: PropTypes.func.isRequired,
+};
 
 function UsersPanel({ showToast }) {
   const [users, setUsers] = useState([]);

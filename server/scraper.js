@@ -402,13 +402,7 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   //    URL: /sport/draws.aspx?id=GUID  (no draw= param)
   //    Contains links: draw.aspx?id=GUID&draw=N with event names as text
   const drawsLandingUrl = `${BASE_URL}/sport/draws.aspx?id=${tournamentGuid}`;
-  let landingHtml;
-  try {
-    landingHtml = await fetchPage(drawsLandingUrl);
-  } catch (err) {
-    console.error(`   ❌ Failed to fetch draws landing page: ${err.message}`);
-    return { events: 0, rounds: 0, matches: 0 };
-  }
+  const landingHtml = await fetchPage(drawsLandingUrl);
   await delay(REQUEST_DELAY_MS);
 
   const { events } = parseTournamentPage(landingHtml, tournamentGuid);

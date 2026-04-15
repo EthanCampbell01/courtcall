@@ -1,3 +1,5 @@
+import PropTypes from 'prop-types';
+
 /**
  * Visual bracket/draw view for a tournament event.
  * Renders a classic elimination bracket with connecting lines.
@@ -15,15 +17,12 @@ export default function BracketView({ rounds, predictions, onSelectMatch }) {
 
           return (
             <div key={round.id} style={{ minWidth: 190, flexShrink: 0 }}>
-              {/* Round header */}
               <div style={{
                 fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase',
                 letterSpacing: '0.5px', padding: '0 8px 8px', textAlign: 'center',
               }}>
                 {round.name}
               </div>
-
-              {/* Matches */}
               <div style={{ position: 'relative' }}>
                 {round.matches.map((match, mi) => {
                   const pred = predictions?.[match.id];
@@ -79,6 +78,34 @@ export default function BracketView({ rounds, predictions, onSelectMatch }) {
   );
 }
 
+const matchShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  player1_name: PropTypes.string.isRequired,
+  player2_name: PropTypes.string.isRequired,
+  player1_seed: PropTypes.number,
+  player2_seed: PropTypes.number,
+  winner_name: PropTypes.string,
+  status: PropTypes.string,
+  score: PropTypes.string,
+});
+
+const roundShape = PropTypes.shape({
+  id: PropTypes.string.isRequired,
+  name: PropTypes.string.isRequired,
+  matches: PropTypes.arrayOf(matchShape).isRequired,
+});
+
+BracketView.propTypes = {
+  rounds: PropTypes.arrayOf(roundShape).isRequired,
+  /** Map of match.id → prediction object (at minimum { predicted_winner: string }) */
+  predictions: PropTypes.objectOf(
+    PropTypes.shape({
+      predicted_winner: PropTypes.string,
+    })
+  ),
+  onSelectMatch: PropTypes.func,
+};
+
 function PlayerRow({ name, seed, isWinner, isPicked, score }) {
   const displayName = name === 'TBD' ? 'TBD' : name.length > 16 ? name.split(' ').pop() : name;
 
@@ -107,6 +134,14 @@ function PlayerRow({ name, seed, isWinner, isPicked, score }) {
     </div>
   );
 }
+
+PlayerRow.propTypes = {
+  name: PropTypes.string.isRequired,
+  seed: PropTypes.number,
+  isWinner: PropTypes.bool,
+  isPicked: PropTypes.bool,
+  score: PropTypes.string,
+};
 
 /**
  * Extract individual player scores from a match score string.

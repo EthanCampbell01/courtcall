@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import PropTypes from 'prop-types';
 
 const EMOJI_OPTIONS = ['😂', '🔥', '💀', '👏', '🤡', '😤', '💪', '🧠'];
 
@@ -6,10 +7,25 @@ const EMOJI_OPTIONS = ['😂', '🔥', '💀', '👏', '🤡', '😤', '💪', '
  * Emoji reaction bar for a prediction.
  * Shows existing reactions as counted pills and a + button to add your own.
  */
+ReactionBar.propTypes = {
+  predictionId: PropTypes.string.isRequired,
+  reactions: PropTypes.arrayOf(
+    PropTypes.shape({
+      user_id: PropTypes.string.isRequired,
+      emoji: PropTypes.string.isRequired,
+      display_name: PropTypes.string,
+    })
+  ),
+  currentUserId: PropTypes.string.isRequired,
+  /** Called with (predictionId, emoji) when a new reaction is picked */
+  onReact: PropTypes.func,
+  /** Called with (predictionId) when the user's existing reaction is removed */
+  onRemove: PropTypes.func,
+};
+
 export default function ReactionBar({ predictionId, reactions = [], currentUserId, onReact, onRemove }) {
   const [showPicker, setShowPicker] = useState(false);
 
-  // Count reactions by emoji
   const counts = {};
   let myReaction = null;
   for (const r of reactions) {
@@ -48,7 +64,6 @@ export default function ReactionBar({ predictionId, reactions = [], currentUserI
         );
       })}
 
-      {/* Add reaction button */}
       <button onClick={() => setShowPicker(!showPicker)} style={{
         width: 28, height: 28, borderRadius: 100,
         border: '1px solid var(--border)', background: 'transparent',
@@ -58,7 +73,6 @@ export default function ReactionBar({ predictionId, reactions = [], currentUserI
         {showPicker ? '✕' : '+'}
       </button>
 
-      {/* Emoji picker */}
       {showPicker && (
         <>
           <div onClick={() => setShowPicker(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../utils/api';
@@ -292,6 +293,13 @@ export default function TournamentDetail() {
     </div>
   );
 }
+
+PlayerLine.propTypes = {
+  name: PropTypes.string.isRequired,
+  seed: PropTypes.number,
+  isWinner: PropTypes.bool,
+  isPick: PropTypes.bool,
+};
 
 function PlayerLine({ name, seed, isWinner, isPick }) {
   const highlight = isWinner || isPick;

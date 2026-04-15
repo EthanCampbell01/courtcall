@@ -32,12 +32,9 @@ export const api = {
 
   // Circuits
   getCircuits: () => request('/circuits'),
-  getCircuit: (slug) => request(`/circuits/${slug}`),
   getUserCircuits: (userId) => request(`/circuits/user/${userId}`),
   joinCircuit: (circuit_id, user_id) =>
     request('/circuits/join', { method: 'POST', body: JSON.stringify({ circuit_id, user_id }) }),
-  createCircuit: (data) =>
-    request('/circuits', { method: 'POST', body: JSON.stringify(data) }),
 
   // Predictions
   submitPrediction: (data) =>
@@ -51,18 +48,8 @@ export const api = {
     request('/leagues', { method: 'POST', body: JSON.stringify(data) }),
   joinLeague: (invite_code, user_id) =>
     request('/leagues/join', { method: 'POST', body: JSON.stringify({ invite_code, user_id }) }),
-  leaveLeague: (league_id, user_id) =>
-    request('/leagues/leave', { method: 'POST', body: JSON.stringify({ league_id, user_id }) }),
   getUserLeagues: (userId) => request(`/leagues/user/${userId}`),
   getLeague: (id) => request(`/leagues/${id}`),
-
-  // Scoring
-  getScoring: () => request('/scoring'),
-
-  // Social
-  getH2H: (userId1, userId2, tournamentId) =>
-    request(`/h2h/${userId1}/${userId2}${tournamentId ? `?tournament=${tournamentId}` : ''}`),
-  getLeagueActivity: (leagueId) => request(`/leagues/${leagueId}/activity`),
 
   // Admin — auto-injects user_id for auth
   addTournament: (data) => {

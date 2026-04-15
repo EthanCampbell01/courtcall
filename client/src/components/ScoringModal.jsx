@@ -18,7 +18,6 @@ export default function ScoringModal({ onClose }) {
         padding: '20px 24px 40px', maxHeight: '85vh', overflowY: 'auto',
         boxShadow: '0 -8px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04)',
       }}>
-        {/* Drag handle */}
         <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border-light)', margin: '0 auto 20px' }} />
 
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, textAlign: 'center' }}>
@@ -59,7 +58,6 @@ export default function ScoringModal({ onClose }) {
           ))}
         </div>
 
-        {/* Max points */}
         <div style={{
           marginTop: 16, padding: '16px 20px', borderRadius: 14, textAlign: 'center',
           background: 'var(--accent-glow)', border: '1px solid rgba(0,232,123,0.15)',

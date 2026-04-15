@@ -20,7 +20,6 @@ app.use((err, _req, res, next) => {
   next(err);
 });
 
-// Serve static frontend in production
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 
 // ─── Boot: init DB if missing, then migrate ───────────────────────────
@@ -31,7 +30,6 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     console.log('No database found — running setup-db.js...');
     require('./setup-db');
   }
-  // Migrations (safe to run on every boot)
   try {
     const db = getDb();
     const cols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
@@ -53,7 +51,7 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN suggested_circuit_id TEXT'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN start_date TEXT'); } catch (e) { /* already exists */ }
 
-    // ─── Make prediction_deadline nullable (was NOT NULL in original schema) ─
+    // SQLite can't ALTER COLUMN — rebuild the table to make prediction_deadline nullable
     try {
       const roundCols = db.prepare("PRAGMA table_info(rounds)").all();
       const deadlineCol = roundCols.find(c => c.name === 'prediction_deadline');
@@ -78,7 +76,7 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
       }
     } catch (e) { console.error('rounds migration failed:', e.message); }
 
-    // ─── Remove fake seed tournaments ────────────────────────────────
+    // Remove fake seed tournaments — FK order: leagues first, then predictions → matches → rounds → events → tournaments
     try {
       const fakeTournamentIds = [
         'ballycastle-2026', 'ciyms-2026', 'cavehill-2026', 'bbc-2026',
@@ -86,7 +84,6 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
         'dl-belfast-2026', 'larne-ladies-2026', 'mt-pleasant-2026', 'casey-tiles-2026',
       ];
       const p = fakeTournamentIds.map(() => '?').join(',');
-      // Correct FK order: leagues/league_members first, then predictions → matches → rounds → events → tournaments
       db.prepare(`DELETE FROM league_members WHERE league_id IN (SELECT id FROM leagues WHERE tournament_id IN (${p}))`).run(...fakeTournamentIds);
       db.prepare(`DELETE FROM leagues WHERE tournament_id IN (${p})`).run(...fakeTournamentIds);
       db.prepare(`DELETE FROM predictions WHERE match_id IN (
@@ -98,7 +95,6 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
       db.prepare(`DELETE FROM rounds WHERE event_id IN (SELECT id FROM events WHERE tournament_id IN (${p}))`).run(...fakeTournamentIds);
       db.prepare(`DELETE FROM events WHERE tournament_id IN (${p})`).run(...fakeTournamentIds);
       db.prepare(`DELETE FROM tournaments WHERE id IN (${p})`).run(...fakeTournamentIds);
-      // Remove demo league and demo user
       db.prepare("DELETE FROM league_members WHERE league_id = 'demo-league'").run();
       db.prepare("DELETE FROM leagues WHERE id = 'demo-league'").run();
       db.prepare("DELETE FROM predictions WHERE user_id = 'demo-user-01'").run();
@@ -109,7 +105,6 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
   } catch (e) { console.error('Migration error:', e.message); }
 })();
 
-// ─── Helpers ──────────────────────────────────────────────────────────
 function hashPin(pin) {
   return crypto.createHash('sha256').update(pin).digest('hex');
 }
@@ -123,20 +118,17 @@ function generateInviteCode() {
 
 // ─── AUTH ROUTES ──────────────────────────────────────────────────────
 
-// Register
 app.post('/api/auth/register', (req, res) => {
   const { username, display_name, pin, avatar } = req.body;
   if (!username || !display_name || !pin || pin.length < 4) {
     return res.status(400).json({ error: 'Username, display name, and 4+ digit PIN required' });
   }
 
-  // Validate username: 3-20 chars, alphanumeric + underscores only
   const cleanUsername = username.trim().toLowerCase();
   if (!/^[a-z0-9_]{3,20}$/.test(cleanUsername)) {
     return res.status(400).json({ error: 'Username must be 3-20 characters, letters/numbers/underscores only' });
   }
 
-  // Sanitise display name
   const cleanDisplayName = display_name.trim().slice(0, 30);
   if (cleanDisplayName.length < 1) {
     return res.status(400).json({ error: 'Display name is required' });
@@ -163,7 +155,6 @@ app.post('/api/auth/register', (req, res) => {
   res.json({ id, username: cleanUsername, display_name: cleanDisplayName, avatar: userAvatar });
 });
 
-// Login
 app.post('/api/auth/login', (req, res) => {
   const { username, pin } = req.body;
   if (!username || !pin) {
@@ -179,14 +170,12 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ id: user.id, username: user.username, display_name: user.display_name, avatar: user.avatar });
 });
 
-// Check if current user has admin access
 app.get('/api/auth/is-admin', (req, res) => {
   res.json({ isAdmin: isAdminUser(req.query.user_id) });
 });
 
 // ─── CIRCUIT ROUTES ──────────────────────────────────────────────────
 
-// List all public circuits
 app.get('/api/circuits', (_req, res) => {
   const db = getDb();
   const circuits = db.prepare(`
@@ -200,7 +189,7 @@ app.get('/api/circuits', (_req, res) => {
   res.json(circuits);
 });
 
-// Get user's circuits (MUST come before :slug route)
+// MUST come before :slug route
 app.get('/api/circuits/user/:userId', (req, res) => {
   const db = getDb();
   const circuits = db.prepare(`
@@ -214,7 +203,6 @@ app.get('/api/circuits/user/:userId', (req, res) => {
   res.json(circuits);
 });
 
-// Get circuit detail
 app.get('/api/circuits/:slug', (req, res) => {
   const db = getDb();
   const circuit = db.prepare('SELECT * FROM circuits WHERE slug = ? OR id = ?')
@@ -237,7 +225,6 @@ app.get('/api/circuits/:slug', (req, res) => {
   res.json(circuit);
 });
 
-// Join a circuit
 app.post('/api/circuits/join', (req, res) => {
   const { circuit_id, user_id } = req.body;
   if (!circuit_id || !user_id) return res.status(400).json({ error: 'circuit_id and user_id required' });
@@ -265,7 +252,6 @@ app.post('/api/circuits/join', (req, res) => {
   res.json({ success: true, circuit: { id: circuit.id, name: circuit.name } });
 });
 
-// Create a new circuit (any user can create)
 app.post('/api/circuits', (req, res) => {
   const { name, slug, description, country, user_id, data_source, data_source_url } = req.body;
   if (!name || !slug || !user_id) return res.status(400).json({ error: 'name, slug, and user_id required' });
@@ -566,18 +552,20 @@ app.get('/api/leagues/:id', (req, res) => {
 // Simple admin auth: require admin_key header or check if user is first registered (admin)
 const ADMIN_KEY = process.env.ADMIN_KEY || 'courtcall-admin-2026';
 
+const getAdminUsernames = () =>
+  (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+
+const getFirstRealUser = (db) =>
+  db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
+
 function isAdminUser(userId) {
   if (!userId) return false;
   const db = getDb();
   const user = db.prepare('SELECT id, username, is_admin FROM users WHERE id = ?').get(userId);
   if (!user) return false;
-  // DB flag
   if (user.is_admin) return true;
-  // ADMIN_USERS env var
-  const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
-  if (adminUsers.includes(user.username.toLowerCase())) return true;
-  // First real registered user (not demo)
-  const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
+  if (getAdminUsernames().includes(user.username.toLowerCase())) return true;
+  const firstReal = getFirstRealUser(db);
   if (firstReal && firstReal.id === userId) return true;
   return false;
 }
@@ -593,8 +581,8 @@ function adminAuth(req, res, next) {
 app.get('/api/admin/users', adminAuth, (_req, res) => {
   const db = getDb();
   const users = db.prepare("SELECT id, username, display_name, avatar, created_at, is_admin FROM users ORDER BY created_at ASC").all();
-  const firstReal = db.prepare("SELECT id FROM users WHERE username != 'demo' ORDER BY created_at ASC LIMIT 1").get();
-  const adminUsers = (process.env.ADMIN_USERS || '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+  const firstReal = getFirstRealUser(db);
+  const adminUsers = getAdminUsernames();
   res.json(users.map(u => ({
     ...u,
     is_admin: !!(u.is_admin || adminUsers.includes(u.username.toLowerCase()) || (firstReal && firstReal.id === u.id)),

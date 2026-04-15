@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../utils/api';
 
-
 /**
  * Onboarding screen shown after first registration.
  * Guides user to: pick their circuits, then join or create a league.
