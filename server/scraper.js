@@ -455,9 +455,11 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
   }
 
   // We have good data — now safe to wipe stale records and re-import.
-  // Disable FK checks for the duration: we're doing a full controlled replacement
-  // and intermediate states (e.g. orphaned rounds from old ID schemes) would
-  // otherwise cause spurious FK errors.
+  // Keep FK off for both the wipe and the re-insert: INSERT OR IGNORE does NOT
+  // catch FK violations (only UNIQUE/NOT NULL/CHECK), so a silently-skipped round
+  // (e.g. due to a stale NOT NULL on prediction_deadline) would cause the
+  // subsequent match inserts to fail with FK errors. Inserts are done in correct
+  // FK order (events → rounds → matches) so disabling the check is safe here.
   db.pragma('foreign_keys = OFF');
   try {
     db.prepare('DELETE FROM predictions WHERE match_id IN (SELECT m.id FROM matches m JOIN rounds r ON m.round_id = r.id JOIN events e ON r.event_id = e.id WHERE e.tournament_id = ?)').run(tournamentId);
@@ -465,63 +467,63 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
     db.prepare('DELETE FROM rounds WHERE event_id IN (SELECT id FROM events WHERE tournament_id = ?)').run(tournamentId);
     db.prepare('DELETE FROM events WHERE tournament_id = ?').run(tournamentId);
     console.log(`   🧹 Cleared stale data for tournament ${tournamentId}`);
-  } finally {
-    db.pragma('foreign_keys = ON');
-  }
 
-  for (const { event, eventId, matches } of fetchedEvents) {
-    db.prepare(`
-      INSERT OR IGNORE INTO events (id, tournament_id, code, name, draw_size)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(eventId, tournamentId, event.name, event.name, 8);
-    db.prepare(`UPDATE events SET code = ?, name = ? WHERE id = ?`).run(event.name, event.name, eventId);
-    results.events++;
-
-    if (matches.length === 0) continue;
-
-    // Group matches by round name, then sort rounds into correct order
-    const byRound = {};
-    for (const match of matches) {
-      if (!byRound[match.roundName]) byRound[match.roundName] = [];
-      byRound[match.roundName].push(match);
-    }
-    const roundOrder = Object.keys(byRound).sort(
-      (a, b) => getRoundSortOrder(a) - getRoundSortOrder(b)
-    );
-
-    for (let r = 0; r < roundOrder.length; r++) {
-      const roundName = roundOrder[r];
-      const slug = roundName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      const roundId = `${eventId}-${slug}`;
-      const roundMatches = byRound[roundName];
-
+    for (const { event, eventId, matches } of fetchedEvents) {
       db.prepare(`
-        INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
+        INSERT OR IGNORE INTO events (id, tournament_id, code, name, draw_size)
         VALUES (?, ?, ?, ?, ?)
-      `).run(roundId, eventId, roundName, r + 1, null);
-      results.rounds++;
+      `).run(eventId, tournamentId, event.name, event.name, 8);
+      db.prepare(`UPDATE events SET code = ?, name = ? WHERE id = ?`).run(event.name, event.name, eventId);
+      results.events++;
 
-      for (let m = 0; m < roundMatches.length; m++) {
-        const match = roundMatches[m];
-        const tiIdUsable = match.tiMatchId && match.tiMatchId !== '0';
-        const matchId = tiIdUsable
-          ? `${eventId}-ti${match.tiMatchId}`
-          : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
+      if (matches.length === 0) continue;
+
+      // Group matches by round name, then sort rounds into correct order
+      const byRound = {};
+      for (const match of matches) {
+        if (!byRound[match.roundName]) byRound[match.roundName] = [];
+        byRound[match.roundName].push(match);
+      }
+      const roundOrder = Object.keys(byRound).sort(
+        (a, b) => getRoundSortOrder(a) - getRoundSortOrder(b)
+      );
+
+      for (let r = 0; r < roundOrder.length; r++) {
+        const roundName = roundOrder[r];
+        const slug = roundName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const roundId = `${eventId}-${slug}`;
+        const roundMatches = byRound[roundName];
 
         db.prepare(`
-          INSERT OR IGNORE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          matchId, roundId,
-          match.player1_name, null,
-          match.player2_name, null,
-          match.status, match.winner_name || null,
-          match.score || null, match.sets_played || null,
-          m + 1
-        );
-        results.matches++;
+          INSERT OR IGNORE INTO rounds (id, event_id, name, round_order, prediction_deadline)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(roundId, eventId, roundName, r + 1, null);
+        results.rounds++;
+
+        for (let m = 0; m < roundMatches.length; m++) {
+          const match = roundMatches[m];
+          const tiIdUsable = match.tiMatchId && match.tiMatchId !== '0';
+          const matchId = tiIdUsable
+            ? `${eventId}-ti${match.tiMatchId}`
+            : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
+
+          db.prepare(`
+            INSERT OR IGNORE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            matchId, roundId,
+            match.player1_name, null,
+            match.player2_name, null,
+            match.status, match.winner_name || null,
+            match.score || null, match.sets_played || null,
+            m + 1
+          );
+          results.matches++;
+        }
       }
     }
+  } finally {
+    db.pragma('foreign_keys = ON');
   }
 
   console.log(`✅ Import complete: ${results.events} events, ${results.rounds} rounds, ${results.matches} matches`);

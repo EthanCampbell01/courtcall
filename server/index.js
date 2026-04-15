@@ -51,13 +51,14 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN suggested_circuit_id TEXT'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE discovered_tournaments ADD COLUMN start_date TEXT'); } catch (e) { /* already exists */ }
 
-    // SQLite can't ALTER COLUMN — rebuild the table to make prediction_deadline nullable
+    // SQLite can't ALTER COLUMN — rebuild the table to make prediction_deadline nullable.
+    // Disable FK during rebuild to avoid constraint errors while the table is being replaced.
     try {
       const roundCols = db.prepare("PRAGMA table_info(rounds)").all();
       const deadlineCol = roundCols.find(c => c.name === 'prediction_deadline');
       if (deadlineCol && deadlineCol.notnull === 1) {
+        db.pragma('foreign_keys = OFF');
         db.exec(`
-          BEGIN;
           CREATE TABLE rounds_new (
             id TEXT PRIMARY KEY,
             event_id TEXT NOT NULL REFERENCES events(id),
@@ -70,11 +71,14 @@ app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
           DROP TABLE rounds;
           ALTER TABLE rounds_new RENAME TO rounds;
           CREATE INDEX IF NOT EXISTS idx_rounds_event ON rounds(event_id);
-          COMMIT;
         `);
+        db.pragma('foreign_keys = ON');
         console.log('✅ Migrated rounds.prediction_deadline to nullable');
       }
-    } catch (e) { console.error('rounds migration failed:', e.message); }
+    } catch (e) {
+      db.pragma('foreign_keys = ON');
+      console.error('rounds migration failed:', e.message);
+    }
 
     // Remove fake seed tournaments — FK order: leagues first, then predictions → matches → rounds → events → tournaments
     try {
