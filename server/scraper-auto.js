@@ -498,18 +498,22 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
 
   const page = await loadPage(url);
 
-  const times = await page.evaluate(() => {
-    const result = {};
+  const { times, debugBlock, blockCount, allText } = await page.evaluate(() => {
+    const times = {};
     const matchBlocks = document.querySelectorAll('li.match-group__item');
+    const blockCount = matchBlocks.length;
 
-    // DEBUG: log first block structure so we can see what JS renders
-    if (matchBlocks.length > 0) {
-      const sample = matchBlocks[0].innerHTML.replace(/\s+/g, ' ').slice(0, 800);
-      console.log('[TI-DEBUG] First rendered match block:', sample);
-    }
+    // Return first block's innerHTML and innerText so Node can log it
+    const debugBlock = blockCount > 0
+      ? matchBlocks[0].innerHTML.replace(/\s+/g, ' ').slice(0, 1000)
+      : '(no match blocks found)';
+
+    // Also grab visible text of first block (what the user actually sees)
+    const allText = blockCount > 0
+      ? (matchBlocks[0].innerText || '').replace(/\s+/g, ' ').slice(0, 300)
+      : '';
 
     matchBlocks.forEach(block => {
-      // Player names are in match__row divs, each containing a nav-link__value span
       const rows = block.querySelectorAll('.match__row');
       const players = [];
       for (const row of rows) {
@@ -522,12 +526,9 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
       }
       if (players.length < 2 || players[0] === players[1]) return;
 
-      // Scheduled time: TI puts it in the match header as a nav-link__value span
-      // (same span that shows "Not yet planned" when unscheduled)
-      // After JS runs it becomes e.g. "Thu 16/04/2026 19:00"
       let scheduledTime = null;
 
-      // 1. <time datetime="..."> element anywhere in the block
+      // 1. <time datetime="..."> element
       const timeEl = block.querySelector('time[datetime]');
       if (timeEl) {
         const dt = timeEl.getAttribute('datetime');
@@ -536,12 +537,11 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
         }
       }
 
-      // 2. nav-link__value span in the header containing a date pattern
+      // 2. Any nav-link__value span in the header with a date pattern
       if (!scheduledTime) {
         const header = block.querySelector('.match__header');
         if (header) {
-          const spans = header.querySelectorAll('.nav-link__value');
-          for (const span of spans) {
+          for (const span of header.querySelectorAll('.nav-link__value')) {
             const text = span.textContent.trim();
             const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
             if (m) {
@@ -552,25 +552,24 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
         }
       }
 
-      // 3. Any date/time text anywhere in the block (broadest fallback)
+      // 3. Any visible text in the whole block matching a date/time
       if (!scheduledTime) {
         const text = block.innerText || block.textContent || '';
         const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
-        if (m) {
-          scheduledTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
-        }
+        if (m) scheduledTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
       }
 
-      if (scheduledTime) {
-        result[`${players[0]}|${players[1]}`] = scheduledTime;
-      }
+      if (scheduledTime) times[`${players[0]}|${players[1]}`] = scheduledTime;
     });
 
-    return result;
+    return { times, debugBlock, blockCount, allText };
   });
 
-  // Collect any console.log messages from page.evaluate (they go to page console, not Node)
-  // Instead grab them via page events — already attached in loadPage if needed
+  console.log(`   🔍 Rendered DOM: ${blockCount} match blocks | visible text: "${allText}"`);
+  if (Object.keys(times).length === 0) {
+    console.log(`   🔍 First block innerHTML: ${debugBlock}`);
+  }
+
   await page.close();
 
   const count = Object.keys(times).length;
