@@ -263,6 +263,11 @@ function parseDrawPage(html) {
   // Split on match blocks
   const blocks = html.split('<li class="match-group__item"').slice(1);
 
+  // Log first block (truncated) so we can see TI's HTML structure around times
+  if (blocks.length > 0) {
+    console.log('[DEBUG] First match block (500 chars):', blocks[0].slice(0, 500).replace(/\s+/g, ' '));
+  }
+
   for (const block of blocks) {
     // TI match ID
     const idM = block.match(/id="match_(\d+)"/);
