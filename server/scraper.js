@@ -309,17 +309,17 @@ function parseDrawPage(html) {
       : players[1].isWinner ? players[1].name
       : null;
 
-    // Scheduled time: prefer ISO datetime attribute, fall back to DD/MM/YYYY HH:MM text
+    // Scheduled time: prefer ISO datetime attribute (with or without seconds),
+    // fall back to DD/MM/YYYY HH:MM text content in the block
     let scheduled_time = null;
-    const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})"/);
+    const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/);
     if (isoM) {
-      scheduled_time = isoM[1];
+      scheduled_time = isoM[1]; // already YYYY-MM-DDTHH:MM
     } else {
-      const slashM = block.match(/(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/);
+      const slashM = block.match(/(\d{2})\/(\d{2})\/(\d{4})[^<]*?(\d{2}:\d{2})/);
       if (slashM) {
-        // Convert DD/MM/YYYY HH:MM → ISO YYYY-MM-DDTHH:MM
-        const [d, mo, y] = slashM[1].split('/');
-        scheduled_time = `${y}-${mo}-${d}T${slashM[2]}`;
+        // DD/MM/YYYY ... HH:MM → ISO YYYY-MM-DDTHH:MM
+        scheduled_time = `${slashM[3]}-${slashM[2]}-${slashM[1]}T${slashM[4]}`;
       }
     }
 
