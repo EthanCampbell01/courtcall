@@ -967,16 +967,34 @@ function addScraperRoutes(app, adminAuth) {
         }
       }
 
+      // Probe schedule URLs for draw 18 (first real draw) to find where times live
+      const firstDrawId = events[0]?.drawId || '18';
+      const scheduleProbes = [];
+      const scheduleUrls = [
+        `${BASE_URL}/tournament/${ti_guid}/Draw/${firstDrawId}/GetMatchesContent?tabindex=0`,
+        `${BASE_URL}/tournament/${ti_guid}/Draw/${firstDrawId}/GetMatchesContent?tabindex=2`,
+        `${BASE_URL}/sport/schedule.aspx?id=${ti_guid}&draw=${firstDrawId}`,
+        `${BASE_URL}/sport/schedule.aspx?id=${ti_guid}`,
+        `${BASE_URL}/tournament/${ti_guid}/order-of-play`,
+      ];
+      for (const url of scheduleUrls) {
+        try {
+          const sh = await fetchPage(url, { 'X-Requested-With': 'XMLHttpRequest' });
+          await delay(REQUEST_DELAY_MS);
+          const hasTime = /\d{2}:\d{2}/.test(sh);
+          const hasDate = /\d{2}\/\d{2}\/\d{4}|datetime="/.test(sh);
+          scheduleProbes.push({ url, length: sh.length, hasTime, hasDate, snippet: sh.replace(/\s+/g, ' ').slice(0, 400) });
+        } catch (e) {
+          scheduleProbes.push({ url, error: e.message });
+        }
+      }
+
       res.json({
         tournamentUrl,
         htmlLength: html.length,
         eventsFromTournamentPage: events,
         drawProbes: probeResults,
-        // Snippet of HTML around draw links (for debugging)
-        drawLinkSnippet: (() => {
-          const idx = html.toLowerCase().indexOf('draws.aspx');
-          return idx >= 0 ? html.slice(Math.max(0, idx - 100), idx + 200) : 'NOT FOUND in HTML';
-        })(),
+        scheduleProbes,
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
