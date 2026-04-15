@@ -415,20 +415,11 @@ async function fetchScheduleTimes(tournamentGuid, drawId) {
       const html = await fetchPage(url, { 'X-Requested-With': 'XMLHttpRequest' });
       await delay(REQUEST_DELAY_MS);
       const times = parseSchedulePage(html);
-      const shortUrl = url.replace(BASE_URL, '');
       if (Object.keys(times).length > 0) {
-        console.log(`   ✅ Schedule times found at: ${shortUrl}`);
+        console.log(`   ✅ Schedule times found at: ${url.replace(BASE_URL, '')}`);
         return times;
       }
-      // Log a snippet so we can see what the page actually contains
-      const snippet = html.replace(/\s+/g, ' ').slice(0, 300);
-      const hasMatchBlock = html.includes('match-group__item') || html.includes('match__row');
-      const hasDatetime = html.includes('datetime=');
-      const hasTime = /\d{2}:\d{2}/.test(html);
-      console.log(`   ⏱  ${shortUrl} → len=${html.length} matchBlock=${hasMatchBlock} datetime=${hasDatetime} time=${hasTime} | ${snippet}`);
-    } catch (err) {
-      const shortUrl = url.replace(BASE_URL, '');
-      console.log(`   ❌ ${shortUrl} → ${err.message}`);
+    } catch {
     }
   }
   return {};
