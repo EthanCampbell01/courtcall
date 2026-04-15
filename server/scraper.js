@@ -417,13 +417,14 @@ function decodeHTMLEntities(text) {
  * Returns a map of "player1|player2" → "YYYY-MM-DDTHH:MM".
  */
 async function fetchScheduleTimes(tournamentGuid, drawId) {
+  // TI injects times via JavaScript — they are not in the AJAX HTML fragments.
+  // Try the full .aspx page (includes embedded JS/JSON data) and a few
+  // other tabindex values that might carry schedule data.
   const urls = [
+    `${BASE_URL}/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`,
     `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=0`,
-    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=2`,
-    `${BASE_URL}/tournament/${tournamentGuid}/OrderOfPlay/GetMatchesContent?tabindex=1`,
-    `${BASE_URL}/tournament/${tournamentGuid}/order-of-play`,
-    `${BASE_URL}/sport/schedule.aspx?id=${tournamentGuid}&draw=${drawId}`,
-    `${BASE_URL}/sport/schedule.aspx?id=${tournamentGuid}`,
+    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=3`,
+    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=4`,
     `${BASE_URL}/sport/orderofplay.aspx?id=${tournamentGuid}`,
   ];
 
@@ -431,15 +432,70 @@ async function fetchScheduleTimes(tournamentGuid, drawId) {
     try {
       const html = await fetchPage(url, { 'X-Requested-With': 'XMLHttpRequest' });
       await delay(REQUEST_DELAY_MS);
+
+      // First try the block-based schedule parser
       const times = parseSchedulePage(html);
       if (Object.keys(times).length > 0) {
         console.log(`   ✅ Schedule times found at: ${url.replace(BASE_URL, '')}`);
         return times;
       }
-    } catch {
+
+      // Also try to extract times from embedded JSON/script data in the full page
+      const scriptTimes = parseEmbeddedScheduleJson(html);
+      if (Object.keys(scriptTimes).length > 0) {
+        console.log(`   ✅ Schedule times found (JSON) at: ${url.replace(BASE_URL, '')}`);
+        return scriptTimes;
+      }
+
+      // DEBUG: for the full .aspx page, log a snippet near any time-like content
+      if (url.includes('.aspx')) {
+        const timeIdx = html.search(/\d{2}:\d{2}/);
+        const dateIdx = html.search(/\d{2}\/\d{2}\/\d{4}/);
+        const hit = timeIdx !== -1 ? timeIdx : dateIdx;
+        if (hit !== -1) {
+          console.log(`   🕐 Time data found in ${url.replace(BASE_URL, '')} at char ${hit}: ${html.slice(Math.max(0, hit - 100), hit + 300).replace(/\s+/g, ' ')}`);
+        } else {
+          console.log(`   ⚠️  No date/time patterns in ${url.replace(BASE_URL, '')} (len=${html.length})`);
+        }
+      }
+    } catch (err) {
+      console.log(`   ❌ ${url.replace(BASE_URL, '')} → ${err.message}`);
     }
   }
   return {};
+}
+
+/**
+ * Look for schedule times embedded as JSON in a full TI page's <script> tags.
+ * TI's JavaScript initialises draws with data objects that include scheduled times.
+ */
+function parseEmbeddedScheduleJson(html) {
+  const times = {};
+
+  // Pattern: JSON objects containing scheduledDate/scheduledTime/matchTime fields
+  // e.g. {"matchId":123,"scheduledDate":"2026-04-16","scheduledTime":"19:00",...}
+  for (const m of html.matchAll(/"scheduledDate"\s*:\s*"(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}))?"/g)) {
+    const date = m[1];
+    const time = m[2];
+    if (!time) continue;
+    // Try to find player names nearby (within 800 chars either side)
+    const start = Math.max(0, m.index - 400);
+    const chunk = html.slice(start, m.index + 400);
+    const names = [...chunk.matchAll(/"(?:player1?Name|name)"\s*:\s*"([^"]+)"/g)].map(n => n[1]);
+    if (names.length >= 2) times[`${names[0]}|${names[1]}`] = `${date}T${time}`;
+  }
+
+  // Pattern: ISO datetime strings near player name pairs
+  // e.g. "dateTime":"2026-04-16T19:00:00" or "time":"2026-04-16T19:00"
+  for (const m of html.matchAll(/"(?:dateTime|scheduledDateTime|matchTime)"\s*:\s*"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/g)) {
+    const iso = m[1];
+    const start = Math.max(0, m.index - 400);
+    const chunk = html.slice(start, m.index + 400);
+    const names = [...chunk.matchAll(/"(?:player1?Name|name)"\s*:\s*"([^"]+)"/g)].map(n => n[1]);
+    if (names.length >= 2) times[`${names[0]}|${names[1]}`] = iso;
+  }
+
+  return times;
 }
 
 /**
