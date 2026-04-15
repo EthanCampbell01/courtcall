@@ -339,11 +339,6 @@ function parseDrawPage(html) {
       }
     }
 
-    // DEBUG: log first block that has no time but looks like it might have one
-    if (!scheduled_time && blocks.indexOf(block) === 0) {
-      const stripped = block.replace(/\s+/g, ' ').slice(0, 500);
-      console.log(`   🔍 First match block (no time found): ${stripped}`);
-    }
 
     matches.push({
       tiMatchId,
@@ -448,58 +443,63 @@ async function fetchScheduleTimes(tournamentGuid, drawId) {
 }
 
 /**
- * Extract "player1|player2" → "YYYY-MM-DDTHH:MM" from any TI schedule HTML.
- * Tries multiple time formats and player name patterns.
+ * Extract "player1|player2" → "YYYY-MM-DDTHH:MM" from TI's Order of Play HTML.
+ * Uses the same block-based approach as parseDrawPage — each match is a
+ * <li class="match-group__item"> block, player names are in nav-link__value spans,
+ * and the scheduled time appears as a nav-link__value span containing "DD/MM/YYYY HH:MM"
+ * (e.g. "Thu 16/04/2026 19:00") or as a datetime= attribute.
  */
 function parseSchedulePage(html) {
   const times = {};
+  const blocks = html.split('<li class="match-group__item"').slice(1);
 
-  // Helper: given a chunk of HTML containing a time, find the two player names
-  function extractPlayers(chunk) {
-    // Primary: nav-link__value spans
-    const spans = [...chunk.matchAll(/nav-link__value">([^<]+)<\/span>/g)];
-    if (spans.length >= 2) {
-      return [decodeHTMLEntities(spans[0][1].trim()), decodeHTMLEntities(spans[1][1].trim())];
+  for (const block of blocks) {
+    // Get player names the same way parseDrawPage does
+    const rowParts = block.split('class="match__row ');
+    const rows = rowParts.slice(1, 3);
+    const players = rows.map(row => {
+      const nameM = row.match(/nav-link__value">([^<]+)<\/span>/);
+      return nameM ? decodeHTMLEntities(nameM[1].trim()) : null;
+    }).filter(p => p && p !== 'TBD' && p !== 'Bye');
+
+    if (players.length < 2 || players[0] === players[1]) continue;
+
+    // Strategy 1: datetime= attribute (most reliable when present)
+    const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/);
+    if (isoM) {
+      times[`${players[0]}|${players[1]}`] = isoM[1];
+      continue;
     }
-    // Fallback: any <a> text that looks like a player name (2+ words, no HTML keywords)
-    const links = [...chunk.matchAll(/<a[^>]*>([A-Z][a-z]+ [A-Z][a-zA-Záéíóú'\-]+(?:\s+\[?\d+\]?)?)<\/a>/g)];
-    if (links.length >= 2) {
-      return [decodeHTMLEntities(links[0][1].trim()), decodeHTMLEntities(links[1][1].trim())];
+
+    // Strategy 2: nav-link__value span containing "Thu 16/04/2026 19:00" style text
+    // TI puts the scheduled time as a nav-link__value in the match header
+    for (const m of block.matchAll(/nav-link__value">([^<]*\d{1,2}\/\d{2}\/\d{4}[^<]*)<\/span>/g)) {
+      const text = m[1].trim();
+      const dateM = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
+      const timeM = text.match(/(\d{2}):(\d{2})(?!\d)/);
+      if (dateM && timeM) {
+        const iso = `${dateM[3]}-${dateM[2]}-${String(dateM[1]).padStart(2, '0')}T${timeM[1]}:${timeM[2]}`;
+        times[`${players[0]}|${players[1]}`] = iso;
+        break;
+      }
     }
-    return null;
+
+    if (times[`${players[0]}|${players[1]}`]) continue;
+
+    // Strategy 3: any DD/MM/YYYY followed within 80 chars by HH:MM anywhere in the block
+    const slashM = block.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
+    if (slashM) {
+      const after = block.slice(slashM.index, slashM.index + 100);
+      const timeM = after.match(/(\d{2}):(\d{2})(?!\d)/);
+      if (timeM) {
+        times[`${players[0]}|${players[1]}`] = `${slashM[3]}-${slashM[2]}-${String(slashM[1]).padStart(2, '0')}T${timeM[1]}:${timeM[2]}`;
+      }
+    }
   }
 
-  function addTime(isoTime, chunk) {
-    const players = extractPlayers(chunk);
-    if (players && players[0] !== 'TBD' && players[1] !== 'TBD' && players[0] !== players[1]) {
-      times[`${players[0]}|${players[1]}`] = isoTime;
-    }
-  }
-
-  // Pattern 1: ISO datetime attribute e.g. datetime="2026-04-16T19:00" or datetime="2026-04-16T19:00:00"
-  for (const m of html.matchAll(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?(?:[Z+][^"]*)?"/g)) {
-    addTime(m[1], html.slice(m.index, m.index + 1200));
-  }
-
-  if (Object.keys(times).length > 0) return times;
-
-  // Pattern 2: DD/MM/YYYY anywhere near HH:MM (allows HTML tags between them)
-  for (const m of html.matchAll(/(\d{2})\/(\d{2})\/(\d{4})/g)) {
-    const chunk = html.slice(m.index, m.index + 400);
-    const timeM = chunk.match(/(\d{2}):(\d{2})(?!\d)/);
-    if (timeM) {
-      const isoTime = `${m[3]}-${m[2]}-${m[1]}T${timeM[1]}:${timeM[2]}`;
-      addTime(isoTime, html.slice(m.index, m.index + 1200));
-    }
-  }
-
-  if (Object.keys(times).length > 0) return times;
-
-  // Pattern 3: match blocks that contain ONLY a time (HH:MM) with no score yet
-  // Used when the draw page itself embeds schedule times inside each match block
-  for (const m of html.matchAll(/class="match[^"]*"[\s\S]{0,200}?(\d{2}:\d{2})[\s\S]{0,50}?nav-link__value">([^<]+)<\/span>[\s\S]{0,300}?nav-link__value">([^<]+)<\/span>/g)) {
-    const today = new Date().toISOString().slice(0, 10);
-    addTime(`${today}T${m[1]}`, html.slice(m.index, m.index + 1200));
+  // DEBUG: log first block when nothing was found so we can see TI's format
+  if (Object.keys(times).length === 0 && blocks.length > 0) {
+    console.log(`   🔍 Schedule block sample: ${blocks[0].replace(/\s+/g, ' ').slice(0, 600)}`);
   }
 
   return times;
