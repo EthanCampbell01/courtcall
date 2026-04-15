@@ -183,7 +183,18 @@ export default function PredictionForm({ showToast }) {
   return (
     <div>
       <BackButton to={`/tournament/${tournamentId}`} label="Back to draw" />
-      <h2 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 24px' }}>Make Your Call</h2>
+      <h2 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 8px' }}>Make Your Call</h2>
+
+      {match.scheduled_time && (() => {
+        const d = new Date(match.scheduled_time);
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 6 }}>
+            🕐 {days[d.getDay()]} {d.getDate()} {months[d.getMonth()]} · {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}
+          </div>
+        );
+      })()}
 
       {/* Winner */}
       <div style={{ marginBottom: 24 }}>
