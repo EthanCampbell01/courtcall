@@ -309,18 +309,40 @@ function parseDrawPage(html) {
       : players[1].isWinner ? players[1].name
       : null;
 
-    // Scheduled time: prefer ISO datetime attribute (with or without seconds),
-    // fall back to DD/MM/YYYY HH:MM text content in the block
+    // Scheduled time: try multiple formats TI uses
     let scheduled_time = null;
+
+    // 1. ISO datetime attribute: datetime="2026-04-16T19:00" or datetime="2026-04-16T19:00:00"
     const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/);
     if (isoM) {
-      scheduled_time = isoM[1]; // already YYYY-MM-DDTHH:MM
-    } else {
-      const slashM = block.match(/(\d{2})\/(\d{2})\/(\d{4})[^<]*?(\d{2}:\d{2})/);
-      if (slashM) {
-        // DD/MM/YYYY ... HH:MM → ISO YYYY-MM-DDTHH:MM
-        scheduled_time = `${slashM[3]}-${slashM[2]}-${slashM[1]}T${slashM[4]}`;
+      scheduled_time = isoM[1];
+    }
+
+    // 2. "Thu 16/04/2026 19:00" — day name followed by DD/MM/YYYY HH:MM (TI schedule view)
+    if (!scheduled_time) {
+      const daySlashM = block.match(/(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\s+(\d{1,2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2})/i);
+      if (daySlashM) {
+        const [, d, mo, yr, t] = daySlashM;
+        scheduled_time = `${yr}-${mo}-${String(d).padStart(2, '0')}T${t}`;
       }
+    }
+
+    // 3. DD/MM/YYYY anywhere in the block, followed within 80 chars (including tags) by HH:MM
+    if (!scheduled_time) {
+      const slashM = block.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if (slashM) {
+        const after = block.slice(slashM.index, slashM.index + 120);
+        const timeM = after.match(/(\d{2}):(\d{2})(?!\d)/);
+        if (timeM) {
+          scheduled_time = `${slashM[3]}-${slashM[2]}-${slashM[1]}T${timeM[1]}:${timeM[2]}`;
+        }
+      }
+    }
+
+    // DEBUG: log first block that has no time but looks like it might have one
+    if (!scheduled_time && blocks.indexOf(block) === 0) {
+      const stripped = block.replace(/\s+/g, ' ').slice(0, 500);
+      console.log(`   🔍 First match block (no time found): ${stripped}`);
     }
 
     matches.push({
