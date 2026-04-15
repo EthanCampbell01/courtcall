@@ -395,6 +395,81 @@ function decodeHTMLEntities(text) {
     .replace(/&nbsp;/g, ' ');
 }
 
+/**
+ * Try to fetch scheduled match times from TI's schedule/order-of-play page.
+ * Returns a map of "player1|player2" → ISO datetime string.
+ * Tries multiple known TI URL patterns and returns on first success.
+ */
+async function fetchScheduleTimes(tournamentGuid, drawId) {
+  const urls = [
+    // Order-of-play AJAX (tabindex=0 on same draw endpoint)
+    `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=0`,
+    // Dedicated schedule page
+    `${BASE_URL}/sport/schedule.aspx?id=${tournamentGuid}&draw=${drawId}`,
+    `${BASE_URL}/sport/schedule.aspx?id=${tournamentGuid}`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const html = await fetchPage(url, { 'X-Requested-With': 'XMLHttpRequest' });
+      await delay(REQUEST_DELAY_MS);
+      const times = parseSchedulePage(html);
+      if (Object.keys(times).length > 0) {
+        console.log(`   Schedule times from: ${url}`);
+        return times;
+      }
+    } catch {
+      // try next URL
+    }
+  }
+  return {};
+}
+
+/**
+ * Parse a TI schedule/order-of-play page and return a map of
+ * "player1|player2" → "YYYY-MM-DDTHH:MM" for any match with a time.
+ */
+function parseSchedulePage(html) {
+  const times = {};
+
+  // Pattern 1: ISO datetime attribute + two player name spans nearby
+  // <time datetime="2026-04-16T19:00:00">...<span class="nav-link__value">Name</span>
+  const rowPattern = /datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/g;
+  let m;
+  while ((m = rowPattern.exec(html)) !== null) {
+    const isoTime = m[1]; // YYYY-MM-DDTHH:MM
+    // Grab the surrounding 800 chars and look for two nav-link__value spans (player names)
+    const chunk = html.slice(m.index, m.index + 800);
+    const nameMatches = [...chunk.matchAll(/nav-link__value">([^<]+)<\/span>/g)];
+    if (nameMatches.length >= 2) {
+      const p1 = decodeHTMLEntities(nameMatches[0][1].trim());
+      const p2 = decodeHTMLEntities(nameMatches[1][1].trim());
+      if (p1 !== 'TBD' && p2 !== 'TBD') {
+        times[`${p1}|${p2}`] = isoTime;
+      }
+    }
+  }
+
+  // Pattern 2: DD/MM/YYYY + HH:MM text near player names
+  if (Object.keys(times).length === 0) {
+    const datePattern = /(\d{2})\/(\d{2})\/(\d{4})[^<]{0,20}?(\d{2}:\d{2})/g;
+    while ((m = datePattern.exec(html)) !== null) {
+      const isoTime = `${m[3]}-${m[2]}-${m[1]}T${m[4]}`;
+      const chunk = html.slice(m.index, m.index + 800);
+      const nameMatches = [...chunk.matchAll(/nav-link__value">([^<]+)<\/span>/g)];
+      if (nameMatches.length >= 2) {
+        const p1 = decodeHTMLEntities(nameMatches[0][1].trim());
+        const p2 = decodeHTMLEntities(nameMatches[1][1].trim());
+        if (p1 !== 'TBD' && p2 !== 'TBD') {
+          times[`${p1}|${p2}`] = isoTime;
+        }
+      }
+    }
+  }
+
+  return times;
+}
+
 // ─── High-Level Scraper Functions ─────────────────────────────────────
 
 /**
@@ -456,6 +531,17 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
 
       const matches = parseDrawPage(drawHtml);
       console.log(`   Parsed ${matches.length} matches`);
+
+      // Try to get scheduled times from the schedule/order-of-play view (tabindex=0)
+      const scheduleTimes = await fetchScheduleTimes(event.tournamentGuid, event.drawId);
+      if (Object.keys(scheduleTimes).length > 0) {
+        console.log(`   Found ${Object.keys(scheduleTimes).length} scheduled times`);
+        for (const m of matches) {
+          const key = `${m.player1_name}|${m.player2_name}`;
+          const keyRev = `${m.player2_name}|${m.player1_name}`;
+          m.scheduled_time = scheduleTimes[key] || scheduleTimes[keyRev] || m.scheduled_time || null;
+        }
+      }
 
       fetchedEvents.push({ event, eventId, matches });
     } catch (err) {
