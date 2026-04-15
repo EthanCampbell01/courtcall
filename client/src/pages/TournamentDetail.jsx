@@ -216,6 +216,33 @@ export default function TournamentDetail() {
               const pred = predictions[match.id];
               const isLocked = match.status !== 'upcoming' || deadlinePassed;
               const isCompleted = match.status === 'completed';
+              const p1Won = isCompleted && match.winner_name === match.player1_name;
+              const p2Won = isCompleted && match.winner_name === match.player2_name;
+              const predCorrect = isCompleted && pred && pred.points_earned > 0;
+              const predWrong = isCompleted && pred && pred.points_earned === 0;
+
+              // Border: result outcome > prediction state > open/locked
+              const borderColor = isCompleted
+                ? predCorrect ? 'rgba(0,232,123,0.45)'
+                  : predWrong ? 'rgba(255,71,87,0.35)'
+                  : 'var(--border)'
+                : pred ? 'rgba(0,232,123,0.2)'
+                : !isLocked ? 'rgba(255,159,28,0.2)'
+                : 'var(--border)';
+
+              // Top accent stripe color
+              const stripeColor = isCompleted
+                ? predCorrect ? 'var(--accent)' : predWrong ? 'var(--red)' : null
+                : pred ? 'var(--accent)' : null;
+
+              // Scheduled time formatting
+              let scheduleLabel = null;
+              if (!isCompleted && match.scheduled_time) {
+                const d = new Date(match.scheduled_time);
+                const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                scheduleLabel = `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+              }
 
               return (
                 <button
@@ -223,35 +250,44 @@ export default function TournamentDetail() {
                   onClick={() => !isLocked && navigate(`/predict/${id}/${match.id}`)}
                   disabled={isLocked && !isCompleted}
                   style={{
-                    background: 'var(--card)', border: `1px solid ${pred ? 'rgba(0,232,123,0.2)' : 'var(--border)'}`,
+                    background: 'var(--card)', border: `1px solid ${borderColor}`,
                     borderRadius: 14, padding: 14, cursor: isLocked ? 'default' : 'pointer',
                     width: '100%', textAlign: 'left', color: 'var(--text)',
                     opacity: isLocked && !isCompleted && !pred ? 0.5 : 1,
-                    transition: 'all 0.2s', animation: `fadeIn 0.3s ease ${i * 0.04}s both`,
+                    transition: 'border-color 0.2s', animation: `fadeIn 0.3s ease ${i * 0.04}s both`,
                     position: 'relative', overflow: 'hidden',
                   }}
                 >
-                  {pred && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, var(--accent), transparent)` }} />}
+                  {stripeColor && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, ${stripeColor}, transparent)` }} />}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ flex: 1 }}>
-                      <PlayerLine name={match.player1_name} seed={match.player1_seed} isWinner={isCompleted && match.winner_name === match.player1_name} isPick={pred?.predicted_winner === match.player1_name} />
+                      <PlayerLine name={match.player1_name} seed={match.player1_seed} isWinner={p1Won} isLoser={isCompleted && !p1Won} isPick={pred?.predicted_winner === match.player1_name} />
                       <div style={{ fontSize: 10, color: 'var(--text-dim)', margin: '3px 0', letterSpacing: 1 }}>VS</div>
-                      <PlayerLine name={match.player2_name} seed={match.player2_seed} isWinner={isCompleted && match.winner_name === match.player2_name} isPick={pred?.predicted_winner === match.player2_name} />
+                      <PlayerLine name={match.player2_name} seed={match.player2_seed} isWinner={p2Won} isLoser={isCompleted && !p2Won} isPick={pred?.predicted_winner === match.player2_name} />
+                      {scheduleLabel && (
+                        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span>🕐</span>{scheduleLabel}
+                        </div>
+                      )}
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 70 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, minWidth: 70, paddingLeft: 8 }}>
                       {isCompleted ? (
                         <>
-                          <div style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>{match.score}</div>
-                          {pred && (
+                          {match.score && (
+                            <div style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--text-muted)', textAlign: 'right' }}>{match.score}</div>
+                          )}
+                          {pred ? (
                             <div style={{
                               padding: '3px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700, fontFamily: 'var(--mono)',
-                              background: pred.points_earned > 0 ? 'var(--accent-glow)' : 'var(--red-glow)',
-                              color: pred.points_earned > 0 ? 'var(--accent)' : 'var(--red)',
+                              background: predCorrect ? 'var(--accent-glow)' : 'var(--red-glow)',
+                              color: predCorrect ? 'var(--accent)' : 'var(--red)',
                             }}>
-                              {pred.points_earned > 0 ? `+${pred.points_earned}` : '0'} pts
+                              {predCorrect ? `+${pred.points_earned}` : '0'} pts
                             </div>
+                          ) : (
+                            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>No pick</span>
                           )}
                         </>
                       ) : pred ? (
@@ -298,19 +334,20 @@ PlayerLine.propTypes = {
   name: PropTypes.string.isRequired,
   seed: PropTypes.number,
   isWinner: PropTypes.bool,
+  isLoser: PropTypes.bool,
   isPick: PropTypes.bool,
 };
 
-function PlayerLine({ name, seed, isWinner, isPick }) {
-  const highlight = isWinner || isPick;
+function PlayerLine({ name, seed, isWinner, isLoser, isPick }) {
+  const color = isWinner ? 'var(--accent)' : isLoser ? 'var(--text-dim)' : isPick ? 'var(--blue)' : 'var(--text)';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      {isPick && <span style={{ fontSize: 10 }}>⭐</span>}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: isLoser ? 0.55 : 1 }}>
       {isWinner && <span style={{ fontSize: 10 }}>✅</span>}
-      <span style={{ fontSize: 14, fontWeight: highlight ? 700 : 500, color: isWinner ? 'var(--accent)' : isPick ? 'var(--blue)' : 'var(--text)' }}>
+      {!isWinner && isPick && <span style={{ fontSize: 10 }}>⭐</span>}
+      <span style={{ fontSize: 14, fontWeight: isWinner ? 700 : 500, color }}>
         {name}
       </span>
-      {seed && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--orange)', fontFamily: 'var(--mono)' }}>[{seed}]</span>}
+      {seed && <span style={{ fontSize: 10, fontWeight: 700, color: isLoser ? 'var(--text-dim)' : 'var(--orange)', fontFamily: 'var(--mono)', opacity: isLoser ? 0.55 : 1 }}>[{seed}]</span>}
     </div>
   );
 }

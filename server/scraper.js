@@ -309,6 +309,20 @@ function parseDrawPage(html) {
       : players[1].isWinner ? players[1].name
       : null;
 
+    // Scheduled time: prefer ISO datetime attribute, fall back to DD/MM/YYYY HH:MM text
+    let scheduled_time = null;
+    const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})"/);
+    if (isoM) {
+      scheduled_time = isoM[1];
+    } else {
+      const slashM = block.match(/(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/);
+      if (slashM) {
+        // Convert DD/MM/YYYY HH:MM → ISO YYYY-MM-DDTHH:MM
+        const [d, mo, y] = slashM[1].split('/');
+        scheduled_time = `${y}-${mo}-${d}T${slashM[2]}`;
+      }
+    }
+
     matches.push({
       tiMatchId,
       roundName,
@@ -317,6 +331,7 @@ function parseDrawPage(html) {
       winner_name: winner,
       score,
       sets_played,
+      scheduled_time,
       status: winner ? 'completed' : 'upcoming',
     });
   }
@@ -508,16 +523,19 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
             : `${roundId}-${(match.player1_name + match.player2_name).replace(/\s+/g, '').toLowerCase().slice(0, 20)}`;
 
           db.prepare(`
-            INSERT OR IGNORE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO matches (id, round_id, player1_name, player1_seed, player2_name, player2_seed, status, winner_name, score, sets_played, match_order, scheduled_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             matchId, roundId,
             match.player1_name, null,
             match.player2_name, null,
             match.status, match.winner_name || null,
             match.score || null, match.sets_played || null,
-            m + 1
+            m + 1, match.scheduled_time || null
           );
+          if (match.scheduled_time) {
+            db.prepare('UPDATE matches SET scheduled_time = ? WHERE id = ?').run(match.scheduled_time, matchId);
+          }
           results.matches++;
         }
       }
