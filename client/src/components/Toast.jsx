@@ -1,3 +1,9 @@
+import PropTypes from 'prop-types';
+
+Toast.propTypes = {
+  message: PropTypes.node.isRequired,
+};
+
 export default function Toast({ message }) {
   return (
     <div style={{

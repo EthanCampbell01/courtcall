@@ -1,4 +1,10 @@
+import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
+
+BackButton.propTypes = {
+  to: PropTypes.string,
+  label: PropTypes.string,
+};
 
 export default function BackButton({ to, label = 'Back' }) {
   const navigate = useNavigate();

@@ -23,7 +23,7 @@ const { nanoid } = require('nanoid');
 const BASE_URL = 'https://ti.tournamentsoftware.com';
 const USER_AGENT = 'CourtCall/1.0 (Irish Tennis Predictions App; contact@courtcall.ie)';
 const REQUEST_DELAY_MS = 2000; // 2 seconds between requests — be polite
-const GDPR_COOKIE = 'st=l=1033&exp=99999&c=1'; // Consent cookie
+const GDPR_COOKIE = 'st=l=1033&exp=99999&c=1';
 
 // ─── HTTP Helper ──────────────────────────────────────────────────────
 function fetchPage(url, extraHeaders = {}) {
@@ -45,7 +45,6 @@ function fetchPage(url, extraHeaders = {}) {
     };
 
     const req = client.request(options, (res) => {
-      // Follow redirects
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const redirectUrl = res.headers.location.startsWith('http')
           ? res.headers.location
@@ -74,9 +73,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * POST form data to a URL and return the response body.
- */
 function postForm(url, formData) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
@@ -118,13 +114,10 @@ function postForm(url, formData) {
   });
 }
 
-// ─── HTML Parsing (no external deps — uses regex for lightweight parsing) ──
-// Note: For production, consider using cheerio. This uses regex patterns
-// that match tournamentsoftware.com's known HTML structure.
+// ─── HTML Parsing (regex against tournamentsoftware.com's known HTML structure) ─
 
 /**
  * Parse tournament list page to find Tennis Ireland tournaments.
- * The find page at ti.tournamentsoftware.com/find lists upcoming tournaments.
  */
 function parseTournamentList(html) {
   const tournaments = [];
@@ -138,7 +131,6 @@ function parseTournamentList(html) {
     const name = decodeHTMLEntities(match[2].trim());
     if (!name || tournaments.find(t => t.guid === guid)) continue;
 
-    // Extract location and date from the next ~800 chars
     const following = html.slice(match.index, match.index + 800);
     const locMatch = following.match(/icon-marker[\s\S]{1,300}?nav-link__value[^>]*>\s*([^<]+?)\s*<\/span>/);
     const location = locMatch ? decodeHTMLEntities(locMatch[1].trim()) : null;

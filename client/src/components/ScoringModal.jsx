@@ -6,6 +6,12 @@ const SCORING = [
   { label: 'Perfect Match', pts: 10, icon: '⭐', color: 'var(--gold)', desc: 'Winner + sets + score all correct' },
 ];
 
+import PropTypes from 'prop-types';
+
+ScoringModal.propTypes = {
+  onClose: PropTypes.func.isRequired,
+};
+
 export default function ScoringModal({ onClose }) {
   return (
     <div onClick={onClose} style={{

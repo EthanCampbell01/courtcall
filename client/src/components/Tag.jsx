@@ -1,3 +1,10 @@
+import PropTypes from 'prop-types';
+
+Tag.propTypes = {
+  text: PropTypes.string.isRequired,
+  color: PropTypes.string,
+};
+
 export default function Tag({ text, color = 'var(--text-muted)' }) {
   return (
     <span style={{

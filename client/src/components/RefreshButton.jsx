@@ -1,9 +1,10 @@
+import PropTypes from 'prop-types';
 import { useState, useRef, useEffect } from 'react';
 
-/**
- * Compact refresh button with loading spinner animation.
- * Place in page headers for manual data refresh.
- */
+RefreshButton.propTypes = {
+  onRefresh: PropTypes.func,
+};
+
 export default function RefreshButton({ onRefresh }) {
   const [refreshing, setRefreshing] = useState(false);
   const timerRef = useRef(null);

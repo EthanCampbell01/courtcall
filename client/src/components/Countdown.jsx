@@ -1,9 +1,11 @@
+import PropTypes from 'prop-types';
 import { useState, useEffect } from 'react';
 
-/**
- * Live countdown timer to a prediction deadline.
- * Visual urgency: calm (green) → warning (orange) → urgent (red) → locked.
- */
+Countdown.propTypes = {
+  deadline: PropTypes.string,
+  label: PropTypes.string,
+};
+
 export default function Countdown({ deadline, label = 'Predictions lock in' }) {
   const [now, setNow] = useState(Date.now());
 
