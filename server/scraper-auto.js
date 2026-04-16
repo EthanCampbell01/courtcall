@@ -499,12 +499,21 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  // Load the modern TI draw URL which renders schedule times via JavaScript
-  const drawUrl = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
-  const page = await loadPage(drawUrl); // networkidle2 + 1.5s built in
+  // Try the Order of Play tab URL first — that's where times are shown.
+  // Fall back to the base draw URL if OOP returns no match blocks.
+  const base = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
+  const oopUrl = `${base}/order-of-play`;
 
-  // Scroll to trigger any lazy-loaded schedule content, then wait up to 8s
-  // for a date pattern to appear in the DOM before reading it
+  let page = await loadPage(oopUrl);
+  const hasBlocks = await page.evaluate(() =>
+    document.querySelectorAll('li.match-group__item').length > 0
+  );
+  if (!hasBlocks) {
+    await page.close();
+    page = await loadPage(base);
+  }
+
+  // Scroll and wait up to 8s for a date pattern to appear
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   try {
     await page.waitForFunction(
