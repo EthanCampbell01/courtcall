@@ -493,7 +493,8 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  const drawUrl = `https://ti.tournamentsoftware.com/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`;
+  // Use the modern TI URL format which renders schedule times via JS
+  const drawUrl = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
 
   const b = await getBrowser();
   const page = await b.newPage();
