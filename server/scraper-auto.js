@@ -561,10 +561,12 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
       } catch { /* no times appeared after tab click */ }
     }
 
-    // Log the full nav info (split across multiple lines to avoid truncation)
-    const navTexts = (oopTabInfo.allLinkTexts || []).slice(0, 30);
-    const navHrefs = (oopTabInfo.allLinkHrefs || []).filter(h => h.includes('draw') || h.includes('play') || h.includes('schedule'));
-    loadedUrl = `oopTab=${oopTabInfo.clicked} | links:${navTexts.join('|').slice(0, 200)} | drawHrefs:${navHrefs.join('|').slice(0, 200)}`;
+    // Build diagnostic strings (logged separately below to avoid truncation)
+    const navTexts = (oopTabInfo.allLinkTexts || []).slice(0, 40);
+    const drawHrefs = (oopTabInfo.allLinkHrefs || []).filter(
+      h => h.includes('draw') || h.includes('play') || h.includes('schedule') || h.includes('order')
+    );
+    loadedUrl = { clicked: oopTabInfo.clicked, navTexts, drawHrefs };
   }
 
   const { times, debugInfo } = await page.evaluate(() => {
@@ -646,7 +648,14 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
   if (count > 0) {
     console.log(`   ✅ Puppeteer found ${count} scheduled times`);
   } else {
-    console.log(`   ⚠️  0 times | hasTime=${hasTimeContent} | ${loadedUrl.slice(0, 120)}`);
+    const nav = typeof loadedUrl === 'object' ? loadedUrl : null;
+    console.log(`   ⚠️  0 times | hasTime=${hasTimeContent} | oopTabClicked=${nav ? nav.clicked : loadedUrl}`);
+    if (nav) {
+      console.log(`   🔗 All links: ${nav.navTexts.join(' | ')}`);
+      if (nav.drawHrefs.length > 0) {
+        console.log(`   🔗 Draw/play hrefs: ${nav.drawHrefs.join(' | ')}`);
+      }
+    }
     if (debugInfo.timesInPage.length > 0) {
       console.log(`   🕐 Times in body: ${debugInfo.timesInPage.join(', ')}`);
     }
