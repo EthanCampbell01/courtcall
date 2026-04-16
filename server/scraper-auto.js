@@ -543,10 +543,11 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
     const bodyText = document.body.innerText || '';
     const allDatesInPage = (bodyText.match(/\d{1,2}\/\d{2}\/\d{4}/g) || []).slice(0, 10);
 
-    // TI puts the schedule date in a section header (h4.module-divider or similar)
-    // that appears BEFORE each group of match blocks.
-    // Walk ALL elements in DOM order, track the current date from section headers,
-    // and associate each match block with the most recent date header above it.
+    // TI schedule times can appear in two ways:
+    //  A) Section header (h4.module-divider) ABOVE a group of match blocks — large draws OOP view
+    //  B) Embedded inside the match block's own text — small draws OOP view
+    // We handle both: walk elements in DOM order tracking the current date from headers,
+    // and also check each match block's own text for a date.
     let currentDateTime = null;
 
     const allEls = Array.from(document.querySelectorAll(
@@ -560,6 +561,7 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
       const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
 
       if (!el.matches('li.match-group__item')) {
+        // Section header — update currentDateTime if it has a date
         const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
         if (m) {
           currentDateTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
@@ -569,16 +571,26 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
         continue;
       }
 
-      if (!currentDateTime) continue;
-
+      // Match block — extract players
       const players = [];
       for (const row of el.querySelectorAll('.match__row')) {
         const name = row.querySelector('.nav-link__value')?.textContent?.trim();
         if (name && name !== 'TBD' && name !== 'Bye') players.push(name);
         if (players.length === 2) break;
       }
-      if (players.length === 2 && players[0] !== players[1]) {
-        times[`${players[0]}|${players[1]}`] = currentDateTime;
+      if (players.length < 2 || players[0] === players[1]) continue;
+
+      // Method A: use the date from the most recent section header
+      let dt = currentDateTime;
+
+      // Method B: if no section-header date, look inside the match block's own text
+      if (!dt) {
+        const bm = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+        if (bm) dt = `${bm[3]}-${bm[2]}-${bm[1].padStart(2, '0')}T${bm[4]}`;
+      }
+
+      if (dt) {
+        times[`${players[0]}|${players[1]}`] = dt;
       }
     }
 
