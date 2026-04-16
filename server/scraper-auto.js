@@ -499,49 +499,76 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  // TI shows schedule times on the Order of Play tab.
-  // Load the base draw URL, then try to navigate to the OOP tab.
+  // TI shows schedule times (HH:MM) only on the Order of Play tab, not on the bracket.
+  // Strategy:
+  //  1. Load the /order-of-play sub-URL directly (may work for some draws)
+  //  2. If no HH:MM times found, reload base URL and click the OOP tab
+  //  3. Extract times from section headers OR from match block text
+
   const base = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
+  const oopUrl = `${base}/order-of-play`;
 
-  const page = await loadPage(base);
-  const loadedUrl = page.url();
+  // Try OOP URL directly first
+  let page = await loadPage(oopUrl);
+  let loadedUrl = page.url();
 
-  // Look for an "Order of Play" tab link and click it
-  const oopTabClicked = await page.evaluate(() => {
-    const links = Array.from(document.querySelectorAll('a, button, [role="tab"]'));
-    const oop = links.find(el => {
-      const t = (el.textContent || el.innerText || '').trim().toLowerCase();
-      return t === 'order of play' || t === 'order of play tab' || /^order\s+of\s+play$/.test(t);
+  // Check if OOP URL gave us any HH:MM times
+  let hasTimeContent = await page.evaluate(
+    () => /\d{2}:\d{2}/.test(document.body.innerText || '')
+  );
+
+  if (!hasTimeContent) {
+    // OOP URL didn't help — try clicking the OOP tab on the base URL
+    await page.close();
+    page = await loadPage(base);
+    loadedUrl = page.url();
+
+    const oopTabInfo = await page.evaluate(() => {
+      // Find OOP tab by href or text
+      const candidates = Array.from(document.querySelectorAll('a, button, [role="tab"], li'));
+      const match = candidates.find(el => {
+        const href = el.getAttribute('href') || '';
+        const t = (el.textContent || el.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return href.includes('order-of-play') || /order\s+of\s+play/.test(t) || t === 'schedule';
+      });
+      if (match) {
+        const info = {
+          tag: match.tagName,
+          text: (match.textContent || '').trim().slice(0, 40),
+          href: match.getAttribute('href') || '',
+        };
+        match.click();
+        return { clicked: true, info };
+      }
+      // Log all nav-like link texts for debugging
+      const navTexts = candidates
+        .filter(el => el.tagName === 'A' || el.getAttribute('role') === 'tab')
+        .map(el => (el.textContent || '').trim())
+        .filter(t => t.length > 0 && t.length < 50)
+        .slice(0, 20);
+      return { clicked: false, navTexts };
     });
-    if (oop) { oop.click(); return true; }
-    return false;
-  });
 
-  if (oopTabClicked) {
-    // Wait for content to update after tab click
-    try {
-      await page.waitForFunction(
-        () => /\d{1,2}\/\d{2}\/\d{4}/.test(document.body.innerText || ''),
-        { timeout: 8000 }
-      );
-    } catch { /* no dates appeared */ }
-  } else {
-    // No OOP tab found — scroll and wait for dates in current view
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    try {
-      await page.waitForFunction(
-        () => /\d{1,2}\/\d{2}\/\d{4}/.test(document.body.innerText || ''),
-        { timeout: 5000 }
-      );
-    } catch { /* no dates */ }
+    if (oopTabInfo.clicked) {
+      try {
+        await page.waitForFunction(
+          () => /\d{2}:\d{2}/.test(document.body.innerText || ''),
+          { timeout: 8000 }
+        );
+        hasTimeContent = true;
+      } catch { /* no times appeared after tab click */ }
+    }
+
+    loadedUrl = `base+oopTab=${oopTabInfo.clicked}|navLinks=${JSON.stringify(oopTabInfo.navTexts || []).slice(0, 120)}`;
   }
 
   const { times, debugInfo } = await page.evaluate(() => {
     const times = {};
 
-    // Scan the full body text first to see if ANY dates exist
+    // Scan the full body text to see what date/time content exists
     const bodyText = document.body.innerText || '';
-    const allDatesInPage = (bodyText.match(/\d{1,2}\/\d{2}\/\d{4}/g) || []).slice(0, 10);
+    const allDatesInPage = (bodyText.match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || []).slice(0, 10);
+    const timesInPage = (bodyText.match(/\d{2}:\d{2}/g) || []).slice(0, 10);
 
     // TI schedule times can appear in two ways:
     //  A) Section header (h4.module-divider) ABOVE a group of match blocks — large draws OOP view
@@ -605,7 +632,7 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
           .replace(/\s+/g, ' ').trim().slice(0, 150)
       : '(no match blocks)';
 
-    return { times, debugInfo: { headingTexts, firstMatchText, allDatesInPage } };
+    return { times, debugInfo: { headingTexts, firstMatchText, allDatesInPage, timesInPage } };
   });
 
   await page.close();
@@ -614,15 +641,18 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
   if (count > 0) {
     console.log(`   ✅ Puppeteer found ${count} scheduled times`);
   } else {
-    console.log(`   ⚠️  0 times (url=${loadedUrl.slice(-40)}, oopTab=${oopTabClicked})`);
+    console.log(`   ⚠️  0 times | hasTime=${hasTimeContent} | ${loadedUrl.slice(0, 120)}`);
+    if (debugInfo.timesInPage.length > 0) {
+      console.log(`   🕐 Times in body: ${debugInfo.timesInPage.join(', ')}`);
+    }
     if (debugInfo.allDatesInPage.length > 0) {
-      console.log(`   🗓  Dates in page body: ${debugInfo.allDatesInPage.join(', ')}`);
+      console.log(`   🗓  Dates in body: ${debugInfo.allDatesInPage.join(', ')}`);
     }
     const dateHeadings = debugInfo.headingTexts.filter(t =>
       /\d{1,2}\/\d{2}\/\d{4}/.test(t) || /\d{2}:\d{2}/.test(t)
     );
     if (dateHeadings.length > 0) {
-      console.log(`   🕐 Date headings: ${dateHeadings.join(' | ')}`);
+      console.log(`   📋 Date headings: ${dateHeadings.join(' | ')}`);
     } else {
       console.log(`   📋 Headings: ${debugInfo.headingTexts.slice(0, 5).join(' | ')}`);
     }
