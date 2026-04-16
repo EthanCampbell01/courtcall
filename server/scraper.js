@@ -419,6 +419,115 @@ function parseSectionDateTime(text) {
   return `${yr}-${month}-${day}T${t}`;
 }
 
+/**
+ * Convert "7:00 PM" / "10:00 AM" → "19:00" / "10:00" (24h).
+ */
+function parse12hTime(text) {
+  const m = text.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  if (m[3].toUpperCase() === 'PM' && h !== 12) h += 12;
+  if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${min}`;
+}
+
+/**
+ * Parse the MatchesInDay AJAX response.
+ * Populates scheduleByDraw: { drawId: { "p1|p2": "YYYY-MM-DDTHH:MM" } }
+ */
+function parseMatchSchedule(html, dateStr, scheduleByDraw) {
+  const isoDate = `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
+
+  // Collect time-header and match-item positions in document order
+  const events = [];
+  let m;
+
+  const timeRe = /<h5[^>]*match-group__header[^>]*>([\s\S]*?)<\/h5>/gi;
+  while ((m = timeRe.exec(html)) !== null) {
+    const t = parse12hTime(m[1].replace(/<[^>]+>/g, '').trim());
+    if (t) events.push({ type: 'time', pos: m.index, t });
+  }
+
+  const itemRe = /<li class="match-group__item"/gi;
+  while ((m = itemRe.exec(html)) !== null) {
+    events.push({ type: 'match', pos: m.index });
+  }
+
+  events.sort((a, b) => a.pos - b.pos);
+
+  let currentTime = null;
+  for (const ev of events) {
+    if (ev.type === 'time') { currentTime = ev.t; continue; }
+    if (!currentTime) continue;
+
+    // Grab a window big enough to contain one match item (~3 KB)
+    const snippet = html.slice(ev.pos, ev.pos + 3000);
+
+    // Draw ID from the draw link in the match header
+    const drawM = snippet.match(/draw\.aspx\?id=[^&"]+&(?:amp;)?draw=(\d+)/i);
+    if (!drawM) continue;
+    const drawId = drawM[1];
+
+    // Player names: split on match__row, take first nav-link__value from each
+    const rowBlocks = snippet.split('class="match__row ').slice(1, 3);
+    const players = [];
+    for (const rb of rowBlocks) {
+      const nm = rb.match(/nav-link__value">([^<]+)</);
+      if (nm) {
+        const name = nm[1].replace(/\s*\[\d+\]/g, '').trim();
+        if (name && name !== 'TBD' && name !== 'Bye') players.push(name);
+      }
+    }
+    if (players.length < 2) continue;
+
+    if (!scheduleByDraw[drawId]) scheduleByDraw[drawId] = {};
+    scheduleByDraw[drawId][`${players[0]}|${players[1]}`] = `${isoDate}T${currentTime}`;
+  }
+}
+
+/**
+ * Fetch the tournament-wide match schedule from /Matches page.
+ * Returns { drawId: { "player1|player2": "YYYY-MM-DDTHH:MM" } }
+ */
+async function fetchTournamentSchedule(tournamentGuid) {
+  const scheduleByDraw = {};
+
+  // 1. Load /Matches page to get available dates
+  let matchesHtml;
+  try {
+    matchesHtml = await fetchPage(`${BASE_URL}/tournament/${tournamentGuid}/Matches`);
+    await delay(REQUEST_DELAY_MS);
+  } catch (err) {
+    console.log(`   ⚠️  Schedule page unavailable: ${err.message}`);
+    return scheduleByDraw;
+  }
+
+  // Parse date selector options: value="20260417"
+  const dateOptions = [...matchesHtml.matchAll(/value="(\d{8})"/g)].map(x => x[1]);
+  if (dateOptions.length === 0) {
+    console.log(`   ⚠️  No schedule dates found`);
+    return scheduleByDraw;
+  }
+  console.log(`   📅 Fetching schedule for ${dateOptions.length} days...`);
+
+  // 2. POST to MatchesInDay for each date
+  const dayUrl = `${BASE_URL}/tournament/${tournamentGuid}/Matches/MatchesInDay`;
+  for (const dateStr of dateOptions) {
+    try {
+      const html = await postForm(dayUrl, { Date: dateStr });
+      await delay(REQUEST_DELAY_MS);
+      parseMatchSchedule(html, dateStr, scheduleByDraw);
+    } catch (err) {
+      console.log(`   ⚠️  Schedule ${dateStr}: ${err.message}`);
+    }
+  }
+
+  const total = Object.values(scheduleByDraw).reduce((s, d) => s + Object.keys(d).length, 0);
+  console.log(`   🕐 Loaded ${total} scheduled times across ${Object.keys(scheduleByDraw).length} draws`);
+  return scheduleByDraw;
+}
+
 function findClosestSeed(seeds, playerIndex, maxDistance) {
   let closest = null;
   let minDist = maxDistance;
@@ -641,7 +750,12 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
     }
   }
 
-  // 2. Fetch all draw data into memory first — only wipe DB if we get actual matches
+  // 2. Fetch tournament-wide match schedule from the /Matches page.
+  //    This is the most reliable source for scheduled times — it groups every match
+  //    by time slot (7:00 PM, 8:00 PM …) across all draws for each day.
+  const tournamentSchedule = await fetchTournamentSchedule(tournamentGuid);
+
+  // 3. Fetch all draw data into memory first — only wipe DB if we get actual matches
   const fetchedEvents = [];
   for (const event of events) {
     const eventCode = inferEventCode(event.name);
@@ -656,14 +770,32 @@ async function scrapeTournamentDraws(tournamentGuid, tournamentId) {
       const matches = parseDrawPage(drawHtml);
       console.log(`   Parsed ${matches.length} matches`);
 
-      // Try to get scheduled times from the schedule/order-of-play view (tabindex=0)
-      const scheduleTimes = await fetchScheduleTimes(event.tournamentGuid, event.drawId);
-      if (Object.keys(scheduleTimes).length > 0) {
-        console.log(`   Found ${Object.keys(scheduleTimes).length} scheduled times`);
-        for (const m of matches) {
-          const key = `${m.player1_name}|${m.player2_name}`;
-          const keyRev = `${m.player2_name}|${m.player1_name}`;
-          m.scheduled_time = scheduleTimes[key] || scheduleTimes[keyRev] || m.scheduled_time || null;
+      // Apply times from the tournament schedule page (primary source)
+      const drawSchedule = tournamentSchedule[event.drawId] || {};
+      let fromSchedulePage = 0;
+      for (const m of matches) {
+        const key = `${m.player1_name}|${m.player2_name}`;
+        const keyRev = `${m.player2_name}|${m.player1_name}`;
+        const t = drawSchedule[key] || drawSchedule[keyRev] || null;
+        if (t) { m.scheduled_time = t; fromSchedulePage++; }
+      }
+      if (fromSchedulePage > 0) {
+        console.log(`   🕐 ${fromSchedulePage} times from schedule page`);
+      }
+
+      // Fallback: try tabindex=0 / Puppeteer for any remaining unscheduled matches
+      const unscheduledCount = matches.filter(m => !m.scheduled_time).length;
+      if (unscheduledCount > 0) {
+        const scheduleTimes = await fetchScheduleTimes(event.tournamentGuid, event.drawId);
+        if (Object.keys(scheduleTimes).length > 0) {
+          console.log(`   Found ${Object.keys(scheduleTimes).length} additional times`);
+          for (const m of matches) {
+            if (!m.scheduled_time) {
+              const key = `${m.player1_name}|${m.player2_name}`;
+              const keyRev = `${m.player2_name}|${m.player1_name}`;
+              m.scheduled_time = scheduleTimes[key] || scheduleTimes[keyRev] || null;
+            }
+          }
         }
       }
 
