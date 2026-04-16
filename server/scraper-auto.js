@@ -524,29 +524,31 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
     loadedUrl = page.url();
 
     const oopTabInfo = await page.evaluate(() => {
-      // Find OOP tab by href or text
-      const candidates = Array.from(document.querySelectorAll('a, button, [role="tab"], li'));
+      // Find OOP tab by href containing "order-of-play" OR text matching "order of play"
+      const candidates = Array.from(document.querySelectorAll('a, button, [role="tab"], li, [class*="tab"]'));
       const match = candidates.find(el => {
-        const href = el.getAttribute('href') || '';
+        const href = (el.getAttribute('href') || '').toLowerCase();
         const t = (el.textContent || el.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        return href.includes('order-of-play') || /order\s+of\s+play/.test(t) || t === 'schedule';
+        return href.includes('order-of-play') || href.includes('orderofplay')
+          || /order\s+of\s+play/.test(t) || t === 'schedule' || t === 'order of play';
       });
       if (match) {
         const info = {
           tag: match.tagName,
-          text: (match.textContent || '').trim().slice(0, 40),
+          text: (match.textContent || '').trim().slice(0, 60),
           href: match.getAttribute('href') || '',
         };
         match.click();
         return { clicked: true, info };
       }
-      // Log all nav-like link texts for debugging
-      const navTexts = candidates
-        .filter(el => el.tagName === 'A' || el.getAttribute('role') === 'tab')
-        .map(el => (el.textContent || '').trim())
-        .filter(t => t.length > 0 && t.length < 50)
-        .slice(0, 20);
-      return { clicked: false, navTexts };
+      // Log ALL link texts so we can see the full navigation
+      const allLinkTexts = Array.from(document.querySelectorAll('a'))
+        .map(el => (el.textContent || '').replace(/\s+/g, ' ').trim())
+        .filter(t => t.length > 0 && t.length < 60);
+      const allLinkHrefs = Array.from(document.querySelectorAll('a'))
+        .map(el => el.getAttribute('href') || '')
+        .filter(Boolean);
+      return { clicked: false, allLinkTexts, allLinkHrefs };
     });
 
     if (oopTabInfo.clicked) {
@@ -559,7 +561,10 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
       } catch { /* no times appeared after tab click */ }
     }
 
-    loadedUrl = `base+oopTab=${oopTabInfo.clicked}|navLinks=${JSON.stringify(oopTabInfo.navTexts || []).slice(0, 120)}`;
+    // Log the full nav info (split across multiple lines to avoid truncation)
+    const navTexts = (oopTabInfo.allLinkTexts || []).slice(0, 30);
+    const navHrefs = (oopTabInfo.allLinkHrefs || []).filter(h => h.includes('draw') || h.includes('play') || h.includes('schedule'));
+    loadedUrl = `oopTab=${oopTabInfo.clicked} | links:${navTexts.join('|').slice(0, 200)} | drawHrefs:${navHrefs.join('|').slice(0, 200)}`;
   }
 
   const { times, debugInfo } = await page.evaluate(() => {
