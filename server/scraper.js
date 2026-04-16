@@ -428,13 +428,22 @@ async function fetchScheduleTimes(tournamentGuid, drawId) {
       console.log(`   🕐 tabindex=0 found ${Object.keys(times).length} times`);
       return times;
     }
-    // Log the first 600 chars of text AND any dates/times found
+    // Log raw HTML excerpt AND any dates/times found
     const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    console.log(`   📄 tabindex=0 (${text.length} chars): ${text.slice(0, 400)}`);
     const datesFound = (text.match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || []).slice(0, 10);
     const timesFound = (text.match(/\d{2}:\d{2}/g) || []).slice(0, 10);
     if (datesFound.length) console.log(`   📅 Dates in tabindex=0: ${datesFound.join(', ')}`);
     if (timesFound.length) console.log(`   🕐 Times in tabindex=0: ${timesFound.join(', ')}`);
+    // Log raw HTML around ANY time patterns to see the surrounding structure
+    const timeInHtml = html.match(/\d{2}:\d{2}/);
+    if (timeInHtml) {
+      const idx = html.indexOf(timeInHtml[0]);
+      console.log(`   🔬 HTML around first time: ${html.slice(Math.max(0, idx - 150), idx + 100)}`);
+    } else {
+      // No time found — log the first h4 element to see section header format
+      const h4Match = html.match(/<h[1-6][^>]*>[\s\S]{0,200}/i);
+      console.log(`   🔬 First heading HTML: ${h4Match ? h4Match[0].slice(0, 300) : '(none)'}`);
+    }
   } catch (err) {
     console.log(`   ⚠️  tabindex=0 failed: ${err.message}`);
   }
