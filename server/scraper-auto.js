@@ -496,7 +496,17 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
   // Load the modern TI draw URL which renders schedule times via JavaScript
   const drawUrl = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
   const page = await loadPage(drawUrl); // networkidle2 + 1.5s built in
-  await delay(2000); // extra buffer for schedule JS to finish
+
+  // Scroll to trigger any lazy-loaded schedule content, then wait up to 8s
+  // for a date pattern to appear in the DOM before reading it
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  try {
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll('li.match-group__item'))
+        .some(el => /\d{1,2}\/\d{2}\/\d{4}/.test(el.innerText || '')),
+      { timeout: 8000 }
+    );
+  } catch { /* times not present — proceed with what we have */ }
 
   const { times, debugValues, firstMatchText } = await page.evaluate(() => {
     const times = {};
