@@ -493,88 +493,91 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  const url = `https://ti.tournamentsoftware.com/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`;
-  console.log(`   🌐 Puppeteer fetching schedule times from draw page...`);
+  // TI shows scheduled times on the Order of Play tab, not the bracket tab.
+  // Load the draw page, click the Order of Play tab, then extract times.
+  const drawUrl = `https://ti.tournamentsoftware.com/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`;
+  console.log(`   🌐 Puppeteer loading draw page to find Order of Play tab...`);
 
-  const page = await loadPage(url);
+  const page = await loadPage(drawUrl);
 
-  const { times, debugBlock, blockCount, allText } = await page.evaluate(() => {
-    const times = {};
-    const matchBlocks = document.querySelectorAll('li.match-group__item');
-    const blockCount = matchBlocks.length;
-
-    // Return first block's innerHTML and innerText so Node can log it
-    const debugBlock = blockCount > 0
-      ? matchBlocks[0].innerHTML.replace(/\s+/g, ' ').slice(0, 1000)
-      : '(no match blocks found)';
-
-    // Also grab visible text of first block (what the user actually sees)
-    const allText = blockCount > 0
-      ? (matchBlocks[0].innerText || '').replace(/\s+/g, ' ').slice(0, 300)
-      : '';
-
-    matchBlocks.forEach(block => {
-      const rows = block.querySelectorAll('.match__row');
-      const players = [];
-      for (const row of rows) {
-        const span = row.querySelector('.nav-link__value');
-        if (span) {
-          const text = span.textContent.trim();
-          if (text && text !== 'TBD' && text !== 'Bye') players.push(text);
-        }
-        if (players.length === 2) break;
+  // Find and click the Order of Play tab (if present)
+  const tabInfo = await page.evaluate(() => {
+    const tabs = Array.from(document.querySelectorAll('a[href], .nav-tabs a, .nav-link, [data-toggle="tab"]'));
+    const found = [];
+    for (const t of tabs) {
+      const text = (t.textContent || '').trim();
+      found.push(text);
+      const lower = text.toLowerCase();
+      if (lower.includes('order') || lower.includes('schedule') || lower.includes('oop') || lower.includes('play')) {
+        t.click();
+        return { clicked: text, all: found.slice(0, 20) };
       }
-      if (players.length < 2 || players[0] === players[1]) return;
-
-      let scheduledTime = null;
-
-      // 1. <time datetime="..."> element
-      const timeEl = block.querySelector('time[datetime]');
-      if (timeEl) {
-        const dt = timeEl.getAttribute('datetime');
-        if (dt && /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dt)) {
-          scheduledTime = dt.slice(0, 16);
-        }
-      }
-
-      // 2. Any nav-link__value span in the header with a date pattern
-      if (!scheduledTime) {
-        const header = block.querySelector('.match__header');
-        if (header) {
-          for (const span of header.querySelectorAll('.nav-link__value')) {
-            const text = span.textContent.trim();
-            const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
-            if (m) {
-              scheduledTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
-              break;
-            }
-          }
-        }
-      }
-
-      // 3. Any visible text in the whole block matching a date/time
-      if (!scheduledTime) {
-        const text = block.innerText || block.textContent || '';
-        const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
-        if (m) scheduledTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
-      }
-
-      if (scheduledTime) times[`${players[0]}|${players[1]}`] = scheduledTime;
-    });
-
-    return { times, debugBlock, blockCount, allText };
+    }
+    return { clicked: null, all: found.slice(0, 20) };
   });
 
-  console.log(`   🔍 Rendered DOM: ${blockCount} match blocks | visible text: "${allText}"`);
-  if (Object.keys(times).length === 0) {
-    console.log(`   🔍 First block innerHTML: ${debugBlock}`);
+  console.log(`   🔍 Tabs found: ${tabInfo.all.filter(t => t).join(' | ')}`);
+  if (tabInfo.clicked) {
+    console.log(`   ✅ Clicked tab: "${tabInfo.clicked}" — waiting for content...`);
+    await delay(2500);
   }
+
+  // Also try fetching Order of Play AJAX content directly from inside the browser
+  // (has full session/cookies, unlike our Node.js HTTP requests)
+  const ajaxTimes = await page.evaluate(async (guid, dId) => {
+    try {
+      const res = await fetch(`/tournament/${guid}/Draw/${dId}/GetMatchesContent?tabindex=0`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html,*/*' },
+      });
+      const html = await res.text();
+      return html.slice(0, 3000); // return snippet for parsing
+    } catch (e) {
+      return null;
+    }
+  }, tournamentGuid, drawId);
 
   await page.close();
 
-  const count = Object.keys(times).length;
-  console.log(`   ${count > 0 ? '✅' : '⚠️ '} Puppeteer found ${count} scheduled times`);
-  return times;
+  // Parse the Order of Play AJAX HTML (now fetched with browser session)
+  if (ajaxTimes) {
+    const times = {};
+    const blocks = ajaxTimes.split('<li class="match-group__item"').slice(1);
+    for (const block of blocks) {
+      // Player names
+      const rowParts = block.split('class="match__row ');
+      const rows = rowParts.slice(1, 3);
+      const players = rows.map(r => {
+        const m = r.match(/nav-link__value">([^<]+)<\/span>/);
+        return m ? m[1].trim() : null;
+      }).filter(p => p && p !== 'TBD' && p !== 'Bye');
+      if (players.length < 2 || players[0] === players[1]) continue;
+
+      // Time patterns
+      const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/);
+      if (isoM) { times[`${players[0]}|${players[1]}`] = isoM[1]; continue; }
+
+      const navM = block.match(/nav-link__value">([^<]*\d{1,2}\/\d{2}\/\d{4}[^<]*)<\/span>/);
+      if (navM) {
+        const text = navM[1];
+        const dM = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
+        const tM = text.match(/(\d{2}):(\d{2})(?!\d)/);
+        if (dM && tM) times[`${players[0]}|${players[1]}`] = `${dM[3]}-${dM[2]}-${dM[1].padStart(2,'0')}T${tM[1]}:${tM[2]}`;
+      }
+    }
+
+    const count = Object.keys(times).length;
+    if (count > 0) {
+      console.log(`   ✅ Puppeteer found ${count} scheduled times (Order of Play AJAX)`);
+      return times;
+    }
+
+    // Log a snippet so we can see what the Order of Play response looks like
+    const snippet = ajaxTimes.replace(/\s+/g, ' ').slice(0, 400);
+    console.log(`   ⚠️  Order of Play AJAX returned no times | snippet: ${snippet}`);
+  }
+
+  console.log(`   ⚠️  Puppeteer found 0 scheduled times`);
+  return {};
 }
 
 // ─── Express Route Integration ──────────────────────────────────────
