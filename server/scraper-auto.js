@@ -45,9 +45,9 @@ async function getBrowser() {
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--window-size=1280,900',
+        '--disable-blink-features=AutomationControlled', // hide bot fingerprint
       ],
     };
-    // Use system Chromium if PUPPETEER_EXECUTABLE_PATH is set (Docker/Railway)
     if (process.env.PUPPETEER_EXECUTABLE_PATH) {
       launchOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     }
@@ -70,6 +70,12 @@ async function loadPage(url) {
 
   await page.setUserAgent(CONFIG.userAgent);
   await page.setViewport({ width: 1280, height: 900 });
+
+  // Hide Puppeteer/automation fingerprint so TI serves full content
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    window.chrome = { runtime: {} };
+  });
 
   // Accept cookies automatically
   await page.setCookie({
