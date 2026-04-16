@@ -493,85 +493,60 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  // Use the modern TI URL format which renders schedule times via JS
+  // Load the modern TI draw URL which renders schedule times via JavaScript
   const drawUrl = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
+  const page = await loadPage(drawUrl); // networkidle2 + 1.5s built in
+  await delay(2000); // extra buffer for schedule JS to finish
 
-  const b = await getBrowser();
-  const page = await b.newPage();
-  await page.setUserAgent(CONFIG.userAgent);
-  await page.setViewport({ width: 1280, height: 900 });
-  await page.setCookie({ name: 'st', value: 'l=1033&exp=99999&c=1', domain: '.tournamentsoftware.com' });
+  const { times, debugValues, firstMatchText } = await page.evaluate(() => {
+    const times = {};
 
-  // Intercept all network responses — find the one that has schedule times
-  const captured = [];
-  page.on('response', async (resp) => {
-    const url = resp.url();
-    if (!url.includes('tournamentsoftware.com')) return;
-    try {
-      const ct = resp.headers()['content-type'] || '';
-      if (!ct.includes('html') && !ct.includes('json') && !ct.includes('text')) return;
-      const body = await resp.text().catch(() => '');
-      // Only keep responses that contain date/time patterns
-      if (/\d{2}\/\d{2}\/\d{4}/.test(body) || /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(body)) {
-        captured.push({ url: url.replace('https://ti.tournamentsoftware.com', ''), body });
+    const debugValues = Array.from(document.querySelectorAll('.nav-link__value'))
+      .map(el => el.textContent.trim()).filter(Boolean).slice(0, 50);
+
+    const firstMatchEl = document.querySelector('li.match-group__item');
+    const firstMatchText = firstMatchEl
+      ? (firstMatchEl.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+      : '(no match blocks)';
+
+    document.querySelectorAll('li.match-group__item').forEach(block => {
+      // Player names from match rows
+      const players = [];
+      for (const row of block.querySelectorAll('.match__row')) {
+        const text = row.querySelector('.nav-link__value')?.textContent?.trim();
+        if (text && text !== 'TBD' && text !== 'Bye') players.push(text);
+        if (players.length === 2) break;
       }
-    } catch { /* ignore */ }
+      if (players.length < 2 || players[0] === players[1]) return;
+
+      // Check innerText of the whole block for "DD/MM/YYYY HH:MM"
+      const blockText = block.innerText || block.textContent || '';
+      const m = blockText.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+      if (m) {
+        times[`${players[0]}|${players[1]}`] =
+          `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
+      }
+    });
+
+    return { times, debugValues, firstMatchText };
   });
 
-  await page.goto(drawUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-  await delay(2000);
   await page.close();
 
-  if (captured.length === 0) {
-    console.log(`   ⚠️  No responses with date/time data captured for draw ${drawId}`);
-    return {};
-  }
-
-  // Log what we found so we know exactly which URL has schedule data
-  for (const c of captured) {
-    console.log(`   📡 Response with time data: ${c.url} (${c.body.length} chars) | ${c.body.replace(/\s+/g, ' ').slice(0, 200)}`);
-  }
-
-  // Try to parse times from each captured response
-  const times = {};
-  for (const { body } of captured) {
-    parseSectionBasedOOP(body, times);
-    if (Object.keys(times).length > 0) break;
-  }
-
   const count = Object.keys(times).length;
-  console.log(`   ${count > 0 ? '✅' : '⚠️ '} Puppeteer found ${count} scheduled times`);
-  return times;
-}
-
-/**
- * Parse TI's Order of Play HTML, which groups matches under module-divider
- * section headers containing the scheduled date/time (e.g. "Thu 16/04/2026 19:00").
- * Modifies the `times` map in place.
- */
-function parseSectionBasedOOP(html, times) {
-  const sections = html.split('<h4 class="module-divider"');
-  for (const section of sections.slice(1)) {
-    const headerM = section.match(/nav-link__value">([^<]+)<\/span>/);
-    const headerText = headerM ? headerM[1].trim() : '';
-    const dateM = headerText.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
-    const timeM = headerText.match(/(\d{2}):(\d{2})(?!\d)/);
-    if (!dateM || !timeM) continue;
-
-    const isoTime = `${dateM[3]}-${dateM[2]}-${dateM[1].padStart(2, '0')}T${timeM[1]}:${timeM[2]}`;
-
-    for (const block of section.split('<li class="match-group__item"').slice(1)) {
-      const rowParts = block.split('class="match__row ');
-      const players = rowParts.slice(1, 3).map(r => {
-        const m = r.match(/nav-link__value">([^<]+)<\/span>/);
-        return m ? m[1].trim() : null;
-      }).filter(p => p && p !== 'TBD' && p !== 'Bye');
-
-      if (players.length >= 2 && players[0] !== players[1]) {
-        times[`${players[0]}|${players[1]}`] = isoTime;
-      }
+  if (count > 0) {
+    console.log(`   ✅ Puppeteer found ${count} scheduled times`);
+  } else {
+    console.log(`   ⚠️  0 times | first match text: "${firstMatchText}"`);
+    // Show all visible nav-link__value text so we can see what JS rendered
+    const datelike = debugValues.filter(v => /\d{2}\/\d{2}\/\d{4}/.test(v) || /\d{2}:\d{2}/.test(v));
+    if (datelike.length > 0) {
+      console.log(`   🕐 Date-like values in DOM: ${datelike.join(' | ')}`);
+    } else {
+      console.log(`   ⚠️  No date/time values in DOM at all`);
     }
   }
+  return times;
 }
 
 // ─── Express Route Integration ──────────────────────────────────────
