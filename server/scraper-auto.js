@@ -499,8 +499,8 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  // Try the Order of Play tab URL first — that's where times are shown.
-  // Fall back to the base draw URL if OOP returns no match blocks.
+  // TI shows schedule times on the Order of Play tab.
+  // Try the /order-of-play URL first; fall back to the base draw URL.
   const base = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
   const oopUrl = `${base}/order-of-play`;
 
@@ -513,47 +513,73 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
     page = await loadPage(base);
   }
 
-  // Scroll and wait up to 8s for a date pattern to appear
+  // Scroll and wait up to 8s for a date header to appear anywhere in the DOM
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   try {
     await page.waitForFunction(
-      () => Array.from(document.querySelectorAll('li.match-group__item'))
-        .some(el => /\d{1,2}\/\d{2}\/\d{4}/.test(el.innerText || '')),
+      () => /\d{1,2}\/\d{2}\/\d{4}/.test(document.body.innerText || ''),
       { timeout: 8000 }
     );
-  } catch { /* times not present — proceed with what we have */ }
+  } catch { /* no dates rendered — proceed with what we have */ }
 
-  const { times, debugValues, firstMatchText } = await page.evaluate(() => {
+  const { times, debugInfo } = await page.evaluate(() => {
     const times = {};
 
-    const debugValues = Array.from(document.querySelectorAll('.nav-link__value'))
-      .map(el => el.textContent.trim()).filter(Boolean).slice(0, 50);
+    // TI puts the date/time in a section header (h4, h3, .module-divider etc.)
+    // that appears BEFORE each group of match blocks — NOT inside the match blocks.
+    // Walk through all matching elements in DOM order, track the current date header,
+    // and attach it to each subsequent match block until the next header.
+    let currentDateTime = null;
 
-    const firstMatchEl = document.querySelector('li.match-group__item');
-    const firstMatchText = firstMatchEl
-      ? (firstMatchEl.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 200)
-      : '(no match blocks)';
+    const allEls = Array.from(document.querySelectorAll(
+      'h1, h2, h3, h4, h5, [class*="divider"], [class*="section"], [class*="header"], li.match-group__item'
+    ));
 
-    document.querySelectorAll('li.match-group__item').forEach(block => {
-      // Player names from match rows
+    for (const el of allEls) {
+      // Skip elements that are descendants of a match block (avoid double-counting)
+      if (el.closest('li.match-group__item') && !el.matches('li.match-group__item')) continue;
+
+      const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+
+      if (!el.matches('li.match-group__item')) {
+        // Check if this heading contains a date/time
+        const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+        if (m) {
+          currentDateTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
+        } else if (/not yet planned/i.test(text)) {
+          currentDateTime = null; // matches under this header have no time
+        }
+        continue;
+      }
+
+      // This is a match block — attach currentDateTime if we have one
+      if (!currentDateTime) continue;
+
       const players = [];
-      for (const row of block.querySelectorAll('.match__row')) {
-        const text = row.querySelector('.nav-link__value')?.textContent?.trim();
-        if (text && text !== 'TBD' && text !== 'Bye') players.push(text);
+      for (const row of el.querySelectorAll('.match__row')) {
+        const name = row.querySelector('.nav-link__value')?.textContent?.trim();
+        if (name && name !== 'TBD' && name !== 'Bye') players.push(name);
         if (players.length === 2) break;
       }
-      if (players.length < 2 || players[0] === players[1]) return;
-
-      // Check innerText of the whole block for "DD/MM/YYYY HH:MM"
-      const blockText = block.innerText || block.textContent || '';
-      const m = blockText.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
-      if (m) {
-        times[`${players[0]}|${players[1]}`] =
-          `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
+      if (players.length === 2 && players[0] !== players[1]) {
+        times[`${players[0]}|${players[1]}`] = currentDateTime;
       }
-    });
+    }
 
-    return { times, debugValues, firstMatchText };
+    // Debug info
+    const headingTexts = Array.from(document.querySelectorAll(
+      'h1, h2, h3, h4, h5, [class*="divider"], [class*="section-header"]'
+    ))
+      .map(el => (el.innerText || el.textContent || '').trim())
+      .filter(t => t.length > 0 && t.length < 120)
+      .slice(0, 20);
+
+    const firstMatchText = document.querySelector('li.match-group__item')
+      ? (document.querySelector('li.match-group__item').innerText || '')
+          .replace(/\s+/g, ' ').trim().slice(0, 200)
+      : '(no match blocks)';
+
+    return { times, debugInfo: { headingTexts, firstMatchText } };
   });
 
   await page.close();
@@ -562,13 +588,14 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
   if (count > 0) {
     console.log(`   ✅ Puppeteer found ${count} scheduled times`);
   } else {
-    console.log(`   ⚠️  0 times | first match text: "${firstMatchText}"`);
-    // Show all visible nav-link__value text so we can see what JS rendered
-    const datelike = debugValues.filter(v => /\d{2}\/\d{2}\/\d{4}/.test(v) || /\d{2}:\d{2}/.test(v));
-    if (datelike.length > 0) {
-      console.log(`   🕐 Date-like values in DOM: ${datelike.join(' | ')}`);
+    console.log(`   ⚠️  0 times | first match: "${debugInfo.firstMatchText.slice(0, 100)}"`);
+    const dateHeadings = debugInfo.headingTexts.filter(t =>
+      /\d{1,2}\/\d{2}\/\d{4}/.test(t) || /\d{2}:\d{2}/.test(t)
+    );
+    if (dateHeadings.length > 0) {
+      console.log(`   🕐 Date headings found: ${dateHeadings.join(' | ')}`);
     } else {
-      console.log(`   ⚠️  No date/time values in DOM at all`);
+      console.log(`   📋 Page headings: ${debugInfo.headingTexts.slice(0, 5).join(' | ')}`);
     }
   }
   return times;
