@@ -260,10 +260,38 @@ function parseTournamentPage(html, tournamentGuid) {
 function parseDrawPage(html) {
   const matches = [];
 
-  // Split on match blocks
-  const blocks = html.split('<li class="match-group__item"').slice(1);
+  // Extract section header times with their positions in the HTML.
+  // TI renders <h4 class="module-divider">Fri 17/04/2026 19:00</h4> (or with child elements)
+  // before groups of scheduled matches. These apply to all match blocks that follow.
+  const sectionTimes = [];
+  const shRe = /<(h[1-6])[^>]*>([\s\S]*?)<\/\1>/gi;
+  let shm;
+  while ((shm = shRe.exec(html)) !== null) {
+    const text = shm[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const dt = parseSectionDateTime(text);
+    if (dt) sectionTimes.push({ pos: shm.index, time: dt });
+  }
 
-  for (const block of blocks) {
+  if (sectionTimes.length > 0) {
+    console.log(`   🕐 tabindex=1 section headers: ${sectionTimes.map(s => s.time).join(', ')}`);
+  }
+
+  // Split on match blocks, tracking cumulative position so we can look up section times
+  const SPLIT_TOKEN = '<li class="match-group__item"';
+  const parts = html.split(SPLIT_TOKEN);
+  let cumPos = parts[0].length; // position of first SPLIT_TOKEN in original HTML
+
+  for (let i = 1; i < parts.length; i++) {
+    const blockStart = cumPos;
+    const block = parts[i];
+    cumPos += SPLIT_TOKEN.length + block.length;
+
+    // Find the most recent section time before this block's position
+    let sectionTime = null;
+    for (const st of sectionTimes) {
+      if (st.pos < blockStart) sectionTime = st.time;
+      else break;
+    }
     // TI match ID
     const idM = block.match(/id="match_(\d+)"/);
     const tiMatchId = idM ? idM[1] : null;
@@ -339,6 +367,10 @@ function parseDrawPage(html) {
       }
     }
 
+    // 4. Fall back to the section header time (h4.module-divider before this match group)
+    if (!scheduled_time && sectionTime) {
+      scheduled_time = sectionTime;
+    }
 
     matches.push({
       tiMatchId,
@@ -357,6 +389,35 @@ function parseDrawPage(html) {
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────
+
+/**
+ * Parse a date+time from plain text extracted from a TI section header.
+ * Handles D/MM/YYYY and M/D/YYYY, with an optional day name prefix.
+ * Returns "YYYY-MM-DDTHH:MM" or null.
+ */
+function parseSectionDateTime(text) {
+  const m = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+  if (!m) return null;
+  const a = parseInt(m[1], 10);
+  const b = parseInt(m[2], 10);
+  const yr = m[3];
+  const t = m[4];
+  let day, month;
+  if (a > 12) {
+    // First number can't be a month → D/MM/YYYY
+    day = String(a).padStart(2, '0');
+    month = String(b).padStart(2, '0');
+  } else if (b > 12) {
+    // Second number can't be a month → M/D/YYYY (US)
+    day = String(b).padStart(2, '0');
+    month = String(a).padStart(2, '0');
+  } else {
+    // Ambiguous — assume D/MM/YYYY (European; TI is Irish)
+    day = String(a).padStart(2, '0');
+    month = String(b).padStart(2, '0');
+  }
+  return `${yr}-${month}-${day}T${t}`;
+}
 
 function findClosestSeed(seeds, playerIndex, maxDistance) {
   let closest = null;
@@ -500,9 +561,9 @@ function parseScheduleTimesFromHtml(html) {
 
   for (const item of items) {
     if (item.type === 'heading') {
-      const dm = item.text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
-      if (dm) {
-        currentDateTime = `${dm[3]}-${dm[2]}-${dm[1].padStart(2, '0')}T${dm[4]}`;
+      const dt = parseSectionDateTime(item.text);
+      if (dt) {
+        currentDateTime = dt;
       } else if (/not yet planned/i.test(item.text)) {
         currentDateTime = null;
       }
