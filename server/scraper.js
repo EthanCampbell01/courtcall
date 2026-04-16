@@ -503,10 +503,12 @@ async function fetchTournamentSchedule(tournamentGuid) {
     return scheduleByDraw;
   }
 
-  // Parse date selector options from the <select id="Date"> element only
-  const selectM = matchesHtml.match(/<select[^>]*id="Date"[^>]*>([\s\S]*?)<\/select>/i);
-  const dateSelectHtml = selectM ? selectM[1] : '';
-  const dateOptions = [...dateSelectHtml.matchAll(/value="(\d{8})"/g)].map(x => x[1]);
+  // Parse date selector options from the <select id="Date"> element only.
+  // Anchor on id="Date" and walk forward to </select> — the tag's attributes
+  // contain literal '>' chars (in validator-regex values) that break [^>]*.
+  const selectM = matchesHtml.match(/id="Date"[\s\S]*?<\/select>/i);
+  const dateSelectHtml = selectM ? selectM[0] : '';
+  const dateOptions = [...dateSelectHtml.matchAll(/<option value="(\d{8})"/g)].map(x => x[1]);
   if (dateOptions.length === 0) {
     console.log(`   ⚠️  No schedule dates found`);
     return scheduleByDraw;
