@@ -500,59 +500,75 @@ async function runDaemon() {
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
   // TI shows schedule times on the Order of Play tab.
-  // Try the /order-of-play URL first; fall back to the base draw URL.
+  // Load the base draw URL, then try to navigate to the OOP tab.
   const base = `https://ti.tournamentsoftware.com/tournament/${tournamentGuid}/draw/${drawId}`;
-  const oopUrl = `${base}/order-of-play`;
 
-  let page = await loadPage(oopUrl);
-  const hasBlocks = await page.evaluate(() =>
-    document.querySelectorAll('li.match-group__item').length > 0
-  );
-  if (!hasBlocks) {
-    await page.close();
-    page = await loadPage(base);
+  const page = await loadPage(base);
+  const loadedUrl = page.url();
+
+  // Look for an "Order of Play" tab link and click it
+  const oopTabClicked = await page.evaluate(() => {
+    const links = Array.from(document.querySelectorAll('a, button, [role="tab"]'));
+    const oop = links.find(el => {
+      const t = (el.textContent || el.innerText || '').trim().toLowerCase();
+      return t === 'order of play' || t === 'order of play tab' || /^order\s+of\s+play$/.test(t);
+    });
+    if (oop) { oop.click(); return true; }
+    return false;
+  });
+
+  if (oopTabClicked) {
+    // Wait for content to update after tab click
+    try {
+      await page.waitForFunction(
+        () => /\d{1,2}\/\d{2}\/\d{4}/.test(document.body.innerText || ''),
+        { timeout: 8000 }
+      );
+    } catch { /* no dates appeared */ }
+  } else {
+    // No OOP tab found — scroll and wait for dates in current view
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    try {
+      await page.waitForFunction(
+        () => /\d{1,2}\/\d{2}\/\d{4}/.test(document.body.innerText || ''),
+        { timeout: 5000 }
+      );
+    } catch { /* no dates */ }
   }
-
-  // Scroll and wait up to 8s for a date header to appear anywhere in the DOM
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  try {
-    await page.waitForFunction(
-      () => /\d{1,2}\/\d{2}\/\d{4}/.test(document.body.innerText || ''),
-      { timeout: 8000 }
-    );
-  } catch { /* no dates rendered — proceed with what we have */ }
 
   const { times, debugInfo } = await page.evaluate(() => {
     const times = {};
 
-    // TI puts the date/time in a section header (h4, h3, .module-divider etc.)
-    // that appears BEFORE each group of match blocks — NOT inside the match blocks.
-    // Walk through all matching elements in DOM order, track the current date header,
-    // and attach it to each subsequent match block until the next header.
+    // Scan the full body text first to see if ANY dates exist
+    const bodyText = document.body.innerText || '';
+    const allDatesInPage = (bodyText.match(/\d{1,2}\/\d{2}\/\d{4}/g) || []).slice(0, 10);
+
+    // TI puts the schedule date in a section header (h4.module-divider or similar)
+    // that appears BEFORE each group of match blocks.
+    // Walk ALL elements in DOM order, track the current date from section headers,
+    // and associate each match block with the most recent date header above it.
     let currentDateTime = null;
 
     const allEls = Array.from(document.querySelectorAll(
-      'h1, h2, h3, h4, h5, [class*="divider"], [class*="section"], [class*="header"], li.match-group__item'
+      'h1, h2, h3, h4, h5, [class*="divider"], [class*="schedule"], li.match-group__item'
     ));
 
     for (const el of allEls) {
-      // Skip elements that are descendants of a match block (avoid double-counting)
-      if (el.closest('li.match-group__item') && !el.matches('li.match-group__item')) continue;
+      // Skip headings that are INSIDE a match block
+      if (!el.matches('li.match-group__item') && el.closest('li.match-group__item')) continue;
 
       const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
 
       if (!el.matches('li.match-group__item')) {
-        // Check if this heading contains a date/time
         const m = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
         if (m) {
           currentDateTime = `${m[3]}-${m[2]}-${m[1].padStart(2, '0')}T${m[4]}`;
         } else if (/not yet planned/i.test(text)) {
-          currentDateTime = null; // matches under this header have no time
+          currentDateTime = null;
         }
         continue;
       }
 
-      // This is a match block — attach currentDateTime if we have one
       if (!currentDateTime) continue;
 
       const players = [];
@@ -566,20 +582,18 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
       }
     }
 
-    // Debug info
-    const headingTexts = Array.from(document.querySelectorAll(
-      'h1, h2, h3, h4, h5, [class*="divider"], [class*="section-header"]'
-    ))
+    // Debug: all heading text
+    const headingTexts = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,[class*="divider"]'))
       .map(el => (el.innerText || el.textContent || '').trim())
-      .filter(t => t.length > 0 && t.length < 120)
-      .slice(0, 20);
+      .filter(t => t.length > 0 && t.length < 100)
+      .slice(0, 15);
 
     const firstMatchText = document.querySelector('li.match-group__item')
       ? (document.querySelector('li.match-group__item').innerText || '')
-          .replace(/\s+/g, ' ').trim().slice(0, 200)
+          .replace(/\s+/g, ' ').trim().slice(0, 150)
       : '(no match blocks)';
 
-    return { times, debugInfo: { headingTexts, firstMatchText } };
+    return { times, debugInfo: { headingTexts, firstMatchText, allDatesInPage } };
   });
 
   await page.close();
@@ -588,14 +602,17 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
   if (count > 0) {
     console.log(`   ✅ Puppeteer found ${count} scheduled times`);
   } else {
-    console.log(`   ⚠️  0 times | first match: "${debugInfo.firstMatchText.slice(0, 100)}"`);
+    console.log(`   ⚠️  0 times (url=${loadedUrl.slice(-40)}, oopTab=${oopTabClicked})`);
+    if (debugInfo.allDatesInPage.length > 0) {
+      console.log(`   🗓  Dates in page body: ${debugInfo.allDatesInPage.join(', ')}`);
+    }
     const dateHeadings = debugInfo.headingTexts.filter(t =>
       /\d{1,2}\/\d{2}\/\d{4}/.test(t) || /\d{2}:\d{2}/.test(t)
     );
     if (dateHeadings.length > 0) {
-      console.log(`   🕐 Date headings found: ${dateHeadings.join(' | ')}`);
+      console.log(`   🕐 Date headings: ${dateHeadings.join(' | ')}`);
     } else {
-      console.log(`   📋 Page headings: ${debugInfo.headingTexts.slice(0, 5).join(' | ')}`);
+      console.log(`   📋 Headings: ${debugInfo.headingTexts.slice(0, 5).join(' | ')}`);
     }
   }
   return times;
