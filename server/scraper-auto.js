@@ -493,44 +493,19 @@ async function runDaemon() {
  * Returns "player1|player2" → "YYYY-MM-DDTHH:MM" map.
  */
 async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
-  // TI shows scheduled times on the Order of Play tab, not the bracket tab.
-  // Load the draw page, click the Order of Play tab, then extract times.
+  // TI's Order of Play groups matches under section headers like "Thu 16/04/2026 19:00".
+  // Unscheduled matches are grouped under "Not yet planned".
+  // We fetch the Order of Play AJAX from inside the browser (full session context),
+  // then parse by section header to assign times to each match group.
   const drawUrl = `https://ti.tournamentsoftware.com/sport/draw.aspx?id=${tournamentGuid}&draw=${drawId}`;
-  console.log(`   🌐 Puppeteer loading draw page to find Order of Play tab...`);
-
   const page = await loadPage(drawUrl);
 
-  // Find and click the Order of Play tab (if present)
-  const tabInfo = await page.evaluate(() => {
-    const tabs = Array.from(document.querySelectorAll('a[href], .nav-tabs a, .nav-link, [data-toggle="tab"]'));
-    const found = [];
-    for (const t of tabs) {
-      const text = (t.textContent || '').trim();
-      found.push(text);
-      const lower = text.toLowerCase();
-      if (lower.includes('order') || lower.includes('schedule') || lower.includes('oop') || lower.includes('play')) {
-        t.click();
-        return { clicked: text, all: found.slice(0, 20) };
-      }
-    }
-    return { clicked: null, all: found.slice(0, 20) };
-  });
-
-  console.log(`   🔍 Tabs found: ${tabInfo.all.filter(t => t).join(' | ')}`);
-  if (tabInfo.clicked) {
-    console.log(`   ✅ Clicked tab: "${tabInfo.clicked}" — waiting for content...`);
-    await delay(2500);
-  }
-
-  // Also try fetching Order of Play AJAX content directly from inside the browser
-  // (has full session/cookies, unlike our Node.js HTTP requests)
-  const ajaxTimes = await page.evaluate(async (guid, dId) => {
+  const oopHtml = await page.evaluate(async (guid, dId) => {
     try {
       const res = await fetch(`/tournament/${guid}/Draw/${dId}/GetMatchesContent?tabindex=0`, {
         headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html,*/*' },
       });
-      const html = await res.text();
-      return html.slice(0, 3000); // return snippet for parsing
+      return await res.text();
     } catch (e) {
       return null;
     }
@@ -538,46 +513,60 @@ async function scrapeDrawScheduleTimes(tournamentGuid, drawId) {
 
   await page.close();
 
-  // Parse the Order of Play AJAX HTML (now fetched with browser session)
-  if (ajaxTimes) {
-    const times = {};
-    const blocks = ajaxTimes.split('<li class="match-group__item"').slice(1);
-    for (const block of blocks) {
-      // Player names
+  if (!oopHtml) return {};
+
+  const times = {};
+
+  // TI Order of Play structure:
+  //   <h4 class="module-divider">...<nav-link__value>Thu 16/04/2026 19:00</nav-link__value>...</h4>
+  //   <ul class="match-group">
+  //     <li class="match-group__item" id="match_N"> ... player1 ... player2 ... </li>
+  //     ...
+  //   </ul>
+  //   <h4 class="module-divider">...<nav-link__value>Not yet planned</nav-link__value>...</h4>
+  //   ...
+  //
+  // Split on section dividers and carry the section's date/time into each match block.
+  const sections = oopHtml.split('<h4 class="module-divider"');
+
+  for (const section of sections.slice(1)) {
+    // Section header: first nav-link__value contains the date or "Not yet planned"
+    const headerM = section.match(/nav-link__value">([^<]+)<\/span>/);
+    const headerText = headerM ? headerM[1].trim() : '';
+
+    // Skip sections with no scheduled time
+    const dateM = headerText.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
+    const timeM = headerText.match(/(\d{2}):(\d{2})(?!\d)/);
+    if (!dateM || !timeM) continue;
+
+    const isoTime = `${dateM[3]}-${dateM[2]}-${dateM[1].padStart(2, '0')}T${timeM[1]}:${timeM[2]}`;
+
+    // All match blocks in this section inherit the section's scheduled time
+    const matchBlocks = section.split('<li class="match-group__item"').slice(1);
+    for (const block of matchBlocks) {
       const rowParts = block.split('class="match__row ');
       const rows = rowParts.slice(1, 3);
       const players = rows.map(r => {
         const m = r.match(/nav-link__value">([^<]+)<\/span>/);
         return m ? m[1].trim() : null;
       }).filter(p => p && p !== 'TBD' && p !== 'Bye');
-      if (players.length < 2 || players[0] === players[1]) continue;
 
-      // Time patterns
-      const isoM = block.match(/datetime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2})?"/);
-      if (isoM) { times[`${players[0]}|${players[1]}`] = isoM[1]; continue; }
-
-      const navM = block.match(/nav-link__value">([^<]*\d{1,2}\/\d{2}\/\d{4}[^<]*)<\/span>/);
-      if (navM) {
-        const text = navM[1];
-        const dM = text.match(/(\d{1,2})\/(\d{2})\/(\d{4})/);
-        const tM = text.match(/(\d{2}):(\d{2})(?!\d)/);
-        if (dM && tM) times[`${players[0]}|${players[1]}`] = `${dM[3]}-${dM[2]}-${dM[1].padStart(2,'0')}T${tM[1]}:${tM[2]}`;
+      if (players.length >= 2 && players[0] !== players[1]) {
+        times[`${players[0]}|${players[1]}`] = isoTime;
       }
     }
-
-    const count = Object.keys(times).length;
-    if (count > 0) {
-      console.log(`   ✅ Puppeteer found ${count} scheduled times (Order of Play AJAX)`);
-      return times;
-    }
-
-    // Log a snippet so we can see what the Order of Play response looks like
-    const snippet = ajaxTimes.replace(/\s+/g, ' ').slice(0, 400);
-    console.log(`   ⚠️  Order of Play AJAX returned no times | snippet: ${snippet}`);
   }
 
-  console.log(`   ⚠️  Puppeteer found 0 scheduled times`);
-  return {};
+  const count = Object.keys(times).length;
+  if (count > 0) {
+    console.log(`   ✅ Puppeteer found ${count} scheduled times`);
+  } else {
+    // Log section headers so we can see what TI returned
+    const headers = [...oopHtml.matchAll(/nav-link__value">([^<]+)<\/span>/g)]
+      .map(m => m[1].trim()).filter(Boolean).slice(0, 10);
+    console.log(`   ⚠️  Puppeteer found 0 times | OOP section headers: ${headers.join(' | ')}`);
+  }
+  return times;
 }
 
 // ─── Express Route Integration ──────────────────────────────────────
