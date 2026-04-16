@@ -417,15 +417,107 @@ function decodeHTMLEntities(text) {
  * Returns a map of "player1|player2" → "YYYY-MM-DDTHH:MM".
  */
 async function fetchScheduleTimes(tournamentGuid, drawId) {
-  // TI renders schedule times via JavaScript — they are not present in any
-  // server-rendered HTML. Fall back to Puppeteer (headless Chrome) if available.
+  // Strategy 1: TI's GetMatchesContent AJAX endpoint with tabindex=0 (OOP/schedule tab)
+  // This is the same API used for brackets (tabindex=1) but for the schedule tab.
+  // It returns static HTML that we can parse without JavaScript rendering.
+  try {
+    const oopAjaxUrl = `${BASE_URL}/tournament/${tournamentGuid}/Draw/${drawId}/GetMatchesContent?tabindex=0`;
+    const html = await fetchPage(oopAjaxUrl, { 'X-Requested-With': 'XMLHttpRequest' });
+    const times = parseScheduleTimesFromHtml(html);
+    if (Object.keys(times).length > 0) {
+      console.log(`   🕐 tabindex=0 found ${Object.keys(times).length} times`);
+      return times;
+    }
+    // Log a snippet so we can see what tabindex=0 returns
+    const snippet = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (snippet.length > 10) console.log(`   📄 tabindex=0 snippet: ${snippet}`);
+  } catch (err) {
+    console.log(`   ⚠️  tabindex=0 failed: ${err.message}`);
+  }
+
+  // Strategy 2: Puppeteer (headless Chrome) for JavaScript-rendered times
   try {
     const { scrapeDrawScheduleTimes } = require('./scraper-auto');
     return await scrapeDrawScheduleTimes(tournamentGuid, drawId);
   } catch {
-    // Puppeteer not available — times will be blank
     return {};
   }
+}
+
+/**
+ * Parse schedule times from TI's OOP/schedule HTML (tabindex=0 response).
+ * TI puts a date/time header (h4.module-divider or similar) BEFORE each group
+ * of match blocks. Walk elements in DOM order to associate each match with its time.
+ */
+function parseScheduleTimesFromHtml(html) {
+  const times = {};
+
+  // Extract all section headers with dates: "Thu 17/04/2026 19:00" or "17/04/2026 19:00"
+  // and the player names that follow them.
+  // Approach: find all date+time patterns and the player names that appear after each.
+
+  // Split HTML into blocks by section headers
+  // Section headers look like: <h4 class="module-divider">Thu 17/04/2026 19:00</h4>
+  // or the date may be wrapped in spans/divs inside the h4.
+  const sectionPattern = /class="[^"]*module-divider[^"]*"[^>]*>([\s\S]*?)<\/h4>/gi;
+  const matchBlockPattern = /class="[^"]*match-group__item[^"]*"[^>]*>([\s\S]*?)(?=<li\s|$)/gi;
+
+  // Parse the full doc looking for date headers and match blocks in order
+  // Use a simpler regex-walk approach on the raw HTML
+  let currentDateTime = null;
+  let pos = 0;
+
+  // Combined pattern: either a date header or a player name block
+  const chunkPattern = /<(?:h[1-5]|[^>]*module-divider[^>]*|li[^>]*match-group__item[^>]*)>([\s\S]*?)(?=<(?:h[1-5]|li[^>]*match-group|\/(?:ul|section|main|body)))/gi;
+
+  const items = [];
+  let m;
+  const combined = /<(h[1-6])[^>]*>([\s\S]*?)<\/\1>|<li[^>]*match-group__item[^>]*>([\s\S]*?)<\/li>/gi;
+  while ((m = combined.exec(html)) !== null) {
+    if (m[1]) {
+      // Heading element
+      const text = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      items.push({ type: 'heading', text });
+    } else {
+      // Match block
+      const inner = m[3];
+      items.push({ type: 'match', inner });
+    }
+  }
+
+  for (const item of items) {
+    if (item.type === 'heading') {
+      const dm = item.text.match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+      if (dm) {
+        currentDateTime = `${dm[3]}-${dm[2]}-${dm[1].padStart(2, '0')}T${dm[4]}`;
+      } else if (/not yet planned/i.test(item.text)) {
+        currentDateTime = null;
+      }
+      continue;
+    }
+
+    // Match block — extract player names and optionally embedded date
+    const inner = item.inner || '';
+    const nameMatches = [...inner.matchAll(/class="[^"]*nav-link__value[^"]*"[^>]*>([^<]+)</gi)];
+    const players = nameMatches
+      .map(n => n[1].trim())
+      .filter(n => n && n !== 'TBD' && n !== 'Bye');
+    const p1 = players[0], p2 = players[1];
+    if (!p1 || !p2 || p1 === p2) continue;
+
+    // Method A: use date from section header above
+    let dt = currentDateTime;
+
+    // Method B: date embedded inside the match block itself
+    if (!dt) {
+      const bm = inner.replace(/<[^>]+>/g, ' ').match(/(\d{1,2})\/(\d{2})\/(\d{4})[^\d]*(\d{2}:\d{2})/);
+      if (bm) dt = `${bm[3]}-${bm[2]}-${bm[1].padStart(2, '0')}T${bm[4]}`;
+    }
+
+    if (dt) times[`${p1}|${p2}`] = dt;
+  }
+
+  return times;
 }
 
 // ─── High-Level Scraper Functions ─────────────────────────────────────
