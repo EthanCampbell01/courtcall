@@ -428,9 +428,13 @@ async function fetchScheduleTimes(tournamentGuid, drawId) {
       console.log(`   🕐 tabindex=0 found ${Object.keys(times).length} times`);
       return times;
     }
-    // Log a snippet so we can see what tabindex=0 returns
-    const snippet = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
-    if (snippet.length > 10) console.log(`   📄 tabindex=0 snippet: ${snippet}`);
+    // Log the first 600 chars of text AND any dates/times found
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    console.log(`   📄 tabindex=0 (${text.length} chars): ${text.slice(0, 400)}`);
+    const datesFound = (text.match(/\d{1,2}\/\d{1,2}\/\d{4}/g) || []).slice(0, 10);
+    const timesFound = (text.match(/\d{2}:\d{2}/g) || []).slice(0, 10);
+    if (datesFound.length) console.log(`   📅 Dates in tabindex=0: ${datesFound.join(', ')}`);
+    if (timesFound.length) console.log(`   🕐 Times in tabindex=0: ${timesFound.join(', ')}`);
   } catch (err) {
     console.log(`   ⚠️  tabindex=0 failed: ${err.message}`);
   }
