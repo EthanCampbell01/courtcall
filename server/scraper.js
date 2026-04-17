@@ -508,20 +508,44 @@ async function fetchTournamentSchedule(tournamentGuid) {
   // contain literal '>' chars (in validator-regex values) that break [^>]*.
   const selectM = matchesHtml.match(/id="Date"[\s\S]*?<\/select>/i);
   const dateSelectHtml = selectM ? selectM[0] : '';
-  const dateOptions = [...dateSelectHtml.matchAll(/<option value="(\d{8})"/g)].map(x => x[1]);
-  if (dateOptions.length === 0) {
+  const allDates = [...dateSelectHtml.matchAll(/<option value="(\d{8})"/g)].map(x => x[1]);
+  if (allDates.length === 0) {
     console.log(`   ⚠️  No schedule dates found`);
     return scheduleByDraw;
   }
-  console.log(`   📅 Fetching schedule for ${dateOptions.length} days...`);
 
-  // 2. POST to MatchesInDay for each date
+  // Limit to the next 21 days from today. Box leagues list hundreds of dates
+  // that would hammer TI (rate-limiting knocks out subsequent tournaments).
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+  const horizon = new Date(today.getTime() + 21 * 24 * 60 * 60 * 1000);
+  const horizonStr = `${horizon.getFullYear()}${String(horizon.getMonth() + 1).padStart(2, '0')}${String(horizon.getDate()).padStart(2, '0')}`;
+  const dateOptions = allDates.filter(d => d >= todayStr && d <= horizonStr);
+  if (dateOptions.length === 0) {
+    console.log(`   📅 No upcoming schedule dates in next 21 days (${allDates.length} total, skipping)`);
+    return scheduleByDraw;
+  }
+  console.log(`   📅 Fetching schedule for ${dateOptions.length} days (of ${allDates.length} total)...`);
+
+  // 2. POST to MatchesInDay for each date, stop early if consistently empty
   const dayUrl = `${BASE_URL}/tournament/${tournamentGuid}/Matches/MatchesInDay`;
+  let consecutiveEmpty = 0;
   for (const dateStr of dateOptions) {
     try {
       const html = await postForm(dayUrl, { Date: dateStr });
       await delay(REQUEST_DELAY_MS);
+      const beforeCount = Object.values(scheduleByDraw).reduce((s, d) => s + Object.keys(d).length, 0);
       parseMatchSchedule(html, dateStr, scheduleByDraw);
+      const afterCount = Object.values(scheduleByDraw).reduce((s, d) => s + Object.keys(d).length, 0);
+      if (afterCount === beforeCount) {
+        consecutiveEmpty++;
+        if (consecutiveEmpty >= 5 && afterCount === 0) {
+          console.log(`   📅 No times in first ${consecutiveEmpty} days — this tournament has no scheduled times, stopping`);
+          break;
+        }
+      } else {
+        consecutiveEmpty = 0;
+      }
     } catch (err) {
       console.log(`   ⚠️  Schedule ${dateStr}: ${err.message}`);
     }
